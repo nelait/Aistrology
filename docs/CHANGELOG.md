@@ -1,0 +1,450 @@
+# Changelog
+
+A running record of the features and fixes delivered in this line of work.
+Grouped by area, roughly in the order they were built. File paths are relative
+to the repo root.
+
+---
+
+## Home page & UX
+
+- **Long-form article** — added "Decoding the Patterns: Rethinking Our
+  Relationship with Astrology" to the landing page, themed to the app, with the
+  ASCII source diagram reworked into a styled flow diagram, a destiny/free-will
+  card pair, a pull-quote, and a disclaimer. (`src/App.tsx`, `src/styles.css`)
+- **Hero polish** — eyebrow pill, stronger headline hierarchy, icon-chip feature
+  bullets, consistent section rhythm/dividers, and a "Simple pricing" eyebrow on
+  Plans.
+- **Functional "Sign in" CTA** — the hero's sign-in button now opens the sign-in
+  menu (the `AccountBar` menu state was lifted so it can be controlled). Replaced
+  the passive "use the button top-right" text.
+- **Hero visual** — a faint, slowly-rotating zodiac **mandala** (inline SVG)
+  behind the sign-in / birth-form panel; respects `prefers-reduced-motion`.
+- **Birth form hints** — a note telling users to Google their birth city's
+  latitude/longitude and enter it manually if it isn't listed, and a clear
+  explanation of the **DST** checkbox (with "India never uses DST" guidance).
+  (`src/components/BirthForm.tsx`)
+
+## Bug fixes
+
+- **Sign out returns home** — signing out now clears the loaded chart and returns
+  to the landing page instead of staying on the tabbed reading view.
+- **Build-breaking `setShowAuth`** — a temple CTA referenced an undefined setter;
+  pointed it at the real `setSignInOpen` (unblocked `npm run build`).
+- **Temple auth used `req.session`** — the temples router assumed
+  express-session, but the app uses JWT cookies; rewritten to the JWT pattern.
+- **`crypto` not defined** — temple DB helpers used bare `crypto.randomUUID()`;
+  switched to the imported `randomUUID`.
+
+## Consultations
+
+- DB-backed marketplace: **Premium** users publish a provider profile (offer),
+  **Free/Pro** users browse approved providers and request bookings, providers
+  manage incoming requests. Admin approves offers.
+- Reachable as a top-level **Consultation** page (header link) — no chart needed.
+- Files: `server/consultation.ts`, `src/components/ConsultationView.tsx`.
+
+## Temples & Pooja Services
+
+- **Separated the two concerns:**
+  - **Temple Affiliation** — a home-page-linked **Temple Portal** where temple
+    officials register and manage their temple, pooja services, and event
+    calendar.
+  - **Pooja Services** — a browse-only tab where logged-in users discover temples
+    and their services/events.
+- **Temples are their own accounts** — separate credentials (email + password)
+  and a dedicated session (`aistro_temple` cookie), fully decoupled from
+  astrology users. Public register/login, temple-scoped management, admin
+  approval. (`server/temples.ts`, `src/components/TempleAffiliationView.tsx`,
+  `src/components/PoojaServicesView.tsx`)
+- **Home-page positioning fix** — the Temple Affiliation section was rendering at
+  half width (missing `grid-column: 1 / -1`); now a full-width band with an even
+  3-card feature row.
+
+## Admin module
+
+- **Secured admin console** — a super-admin is **seeded from `.env`**
+  (`ADMIN_EMAIL` / `ADMIN_PASSWORD`) and can never be created via public
+  registration. Admin access requires an **elevated session** obtained through a
+  separate login that also needs `ADMIN_ACCESS_CODE`. Every `/api/admin/*` route
+  is behind `requireAdmin`. See [admin-console.md](admin-console.md).
+- **Sections:** Overview, Usage & Limits, Users (create/edit plan+role,
+  suspend), Approvals (consultation offers), Temples (approve), Reminders,
+  Promo Codes, Notifications, AI/LLM, Features.
+- Files: `server/admin.ts`, `server/auth.ts`, `src/components/AdminView.tsx`.
+
+## Notifications
+
+- In-app **notification bell** (unread count, dropdown, mark read/all).
+- Admin can broadcast to all users or target specific users.
+- Files: `server/notifications.ts`, `src/components/NotificationBell.tsx`.
+
+## Global (admin-managed) LLM config
+
+- LLM provider keys moved from **per-user** to a single **global** config set by
+  admins; all users' AI features (Justify/Translate) run on it. The per-user
+  AI-settings UI was removed. (`server/llm.ts`, `AI / LLM` admin section)
+
+## Feature flags
+
+- Admin can enable/disable major features: **Consultations**, **Temples & Pooja
+  Services**, **Vastu**, **Reminders**. Disabled features are hidden in the UI
+  **and** blocked at the API (403) via `requireFeature`. Flags ride along in
+  `/auth/me`. Files: `server/features.ts`, `Features` admin section.
+
+## Reminders
+
+- **Personal reminders** — users add important dates (e.g. annual rituals /
+  death anniversaries), choose annual or one-time, a "remind me N days before"
+  lead, notes, on/off.
+- **Festivals** — an admin-curated list users **opt into**.
+- **Delivery** — a pluggable mailer sends real email via **Resend** when
+  `RESEND_API_KEY` + `REMINDER_FROM_EMAIL` are set; otherwise reminders arrive as
+  in-app notifications (and are logged). An in-process **scheduler** dispatches
+  due items (hourly, idempotent via a per-occurrence guard).
+- Admin manages festivals and can "Run reminder check now".
+- Files: `server/reminders.ts`, `server/reminderScheduler.ts`, `server/mailer.ts`,
+  `src/components/RemindersView.tsx`.
+
+## Promo codes & payments
+
+- **Promo codes** — admin-issued codes granting Pro/Premium for a fixed
+  **duration** (1 week / 2 weeks / 1 month / 1 year), with an optional
+  **max-redemptions** cap and code validity window; **once per user**; auto-
+  **downgrade to Basic (Free)** when the grant lapses.
+- **Stripe ⇄ promo compatibility** — fixed two real bugs so a paying subscriber
+  is never wrongly downgraded and a subscription can't be shadowed by a promo.
+- **Refunds & disputes (webhook-driven, never money-moving)** — the app now
+  reacts to three more Stripe events. It never issues refunds itself:
+  - `charge.refunded` → **notify only** (user + admins); access unchanged, since
+    a refund doesn't cancel a subscription.
+  - `charge.dispute.created` → **revoke the paid plan immediately**
+    (`plan_source = 'disputed'`, which the reconcile-on-load skips so an active
+    subscription can't silently restore it); alert user + admins.
+  - `charge.dispute.closed` → restore the live plan if **won**, else stay revoked.
+  - **Admin visibility** — admin notifications **plus** a persistent read-only
+    **Billing** audit trail (`billing_events` table, **Admin → Billing**).
+- Full details: **[promos-and-payments.md](promos-and-payments.md)** (see
+  *Refunds & disputes*).
+- Files: `server/promo.ts`, `server/stripe.ts`, `server/admin.ts`, DB helpers in
+  `server/db.ts`, `src/components/AdminView.tsx`, `src/api/client.ts`.
+
+## Astro Chat (Phases 1–3)
+
+- **Streaming AI chat for logged-in users**, grounded in the loaded chart and the
+  current module — a floating panel available across the reading view. Reuses the
+  existing provider streaming layer (OpenAI / Anthropic / Gemini + `demo`).
+- **Context injection** — the client summarizes the computed chart (ascendant +
+  planet placements) and the active section, and threads it into the system
+  prompt so answers are specific to the user's chart.
+- **Access** — not paid-only: a small free daily allowance (`chat` quota:
+  free 5 / pro 50 / premium 200) as an upgrade hook; a `chat` feature flag lets
+  admins toggle it.
+- **Persistence (Phase 2)** — conversations and messages are saved
+  (`chat_conversations` / `chat_messages`), so history survives reloads. The
+  panel has a history list, New chat, resume, and delete; every conversation is
+  scoped to its owner (SQL-enforced, cross-user access returns 404). The stream
+  endpoint auto-creates + auto-titles a conversation and writes each turn.
+- Endpoints: `POST /api/llm/chat/stream` (SSE, same framing as `justify/stream`)
+  and the `GET`/`DELETE /api/chat/conversations[/:id]` CRUD router.
+- **Module hooks (Phase 3)** — a shared `AstroChatProvider` + `AskAiButton`; the
+  Doshas, Muhurta and Vastu views now show a "✦ Ask AI" button that opens the
+  panel and starts a fresh conversation seeded with that specific finding (the
+  chart summary is still injected automatically).
+- **Grounded free-typed questions** — the chat context now carries
+  `findings[]`: detected doshas are always injected (so "do I have any doshas?"
+  names the real ones), and Muhurta/Vastu publish their computed results while
+  visible via `usePublishChatContext`. The system prompt tells the model to
+  prefer these over generic reasoning.
+- **Profile scoping fix** — switching profiles now resets the chat thread (was
+  leaving the previous profile's conversation on screen); history is unaffected.
+- **Validation** — context builders extracted to a pure module
+  (`src/chat/context.ts`) with deterministic unit tests incl. **cross-profile
+  isolation**, plus a **contradiction scanner** (`src/chat/contradictions.ts`)
+  that flags replies asserting placements that disagree with the chart — both run
+  in `npm test`. A live golden-set eval `npm run eval:chat` (factual anchors,
+  cross-profile differentiation, dosha grounding, contradiction scan) covers the
+  nightly/pre-release layer. A **component test** (`ChatPanel.test.tsx`, jsdom +
+  Testing Library) verifies the profile-switch reset. See
+  [astro-chat.md](astro-chat.md) § Validation.
+- Full details & roadmap: **[astro-chat.md](astro-chat.md)**.
+- Files: `server/llm.ts`, `server/chat.ts`, `server/db.ts`, `server/features.ts`,
+  `server/rateLimit.ts`, `src/components/ChatPanel.tsx`, `src/chat/AstroChat.tsx`,
+  `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
+  views.
+
+## Railway deployment
+
+- **The app now deploys as a single always-on service.** `server/index.ts` serves
+  the built SPA from `dist/` with an SPA fallback when `NODE_ENV=production`
+  (mounted after the API routes, so `/api/*` and `/auth/*` are never shadowed and
+  unknown API paths still 404 as JSON). One origin keeps the same-site session
+  cookie and relative `fetch` paths working with no CORS. `SERVE_STATIC=false`
+  opts out if the frontend is hosted separately.
+- **Production hardening:** `ALLOW_DEV_LOGIN` now defaults **off** when
+  `NODE_ENV=production` and must be explicitly `"true"` to enable — previously it
+  defaulted on, which would have let anyone sign in as any name on a public
+  deploy.
+- **Postgres TLS is automatic:** enabled for remote hosts (Railway's public
+  proxy, Neon, Supabase), skipped for `localhost` and `*.railway.internal`;
+  `sslmode=disable` and `PGSSLMODE` are honoured.
+- **`tsx` moved to `dependencies`** so `npm start` survives dev-dependency
+  pruning, plus a `start` script and `engines: node >=20`.
+- **New [`railway.json`](../railway.json)** — Nixpacks build, `npm start`,
+  healthcheck on `/api/health`, restart-on-failure, one replica.
+- **New `npm run deploy:check`** ([`scripts/deploy-check.ts`](../scripts/deploy-check.ts))
+  — a preflight that exits non-zero on placeholder secrets, missing
+  `DATABASE_URL`, non-HTTPS `APP_URL`, dev login enabled in production, partial
+  admin config or a missing build, and reports which integrations are live.
+- Step-by-step instructions in [deployment.md](deployment.md#deploying-to-railway);
+  `.env.example` gained a production section.
+- **Scheduler extracted for scale-out.** The reminder/promo sweep is now also a
+  one-shot process that exits — `npm run scheduler:run`
+  ([`scripts/run-scheduled.ts`](../scripts/run-scheduled.ts)) — suitable for a
+  Railway Cron service. It logs what it dispatched, closes the pool, and exits
+  non-zero if either check failed so a bad run is visible. It is idempotent
+  (verified: a second run dispatched 0 and sent no duplicate). `RUN_SCHEDULER=false`
+  disables the in-process timer on the web service, which then boots with
+  `scheduler✗(cron)`. With cron in place the only remaining per-process state is
+  the rate limiter / quota table.
+- **Fixed: reminder notifications named the wrong day.** `prettyDate` in
+  `reminderScheduler.ts` formatted a UTC-pinned date without `timeZone: "UTC"`,
+  so any server west of UTC told users their ritual or festival was **a day
+  earlier** than it is (a reminder for 2026-08-05 read "4 August 2026"). Same
+  class of bug as the Muhurta heading; found by running the new cron job against
+  a seeded reminder.
+- Files: `server/index.ts`, `server/config.ts`, `server/db.ts`,
+  `server/reminderScheduler.ts`, `railway.json`, `scripts/deploy-check.ts`,
+  `scripts/run-scheduled.ts`, `package.json`, `.env.example`.
+
+## Muhurta — quality audit & fixes
+
+- **Audited the module against external and analytic references.** Tithi was
+  validated against published syzygy instants (New Moon 2026-08-12 17:37 UTC,
+  Full Moon 2026-08-28 04:18 UTC): the module reads Amavasya/Purnima at sunrise
+  on those dates and rolls to Pratipada the next day — exactly right. Sunrise/
+  sunset was checked against **first principles** (not a third-party API) and
+  matches the analytic half-day formula to under a minute (Delhi solstice 838.0
+  analytic vs 838 computed; equator equinox 726.7 vs 727). GMST is exact to 4 dp
+  and solar declination is correct at the solstice. The Rahu Kaal / Yamaganda /
+  Gulika weekday tables match classical convention, Abhijit is centred on solar
+  noon, and Brahma Muhurta spans 96→48 min before sunrise.
+- **Fixed: ΔT was not applied.** `muhurta.ts` passed raw JD(UT) to the Sun, Moon
+  and ayanamsa routines, while `engine.ts`, `events.ts` and `transits.ts` all use
+  JD(TT). At ~69 s that is ~0.011° of Moon longitude — enough to flip a tithi or
+  nakshatra right at a boundary. Now converts to TT for ephemerides while keeping
+  sidereal time on UT (the correct split).
+- **Fixed: tithi naming.** The 15th tithi of a paksha is now reported as
+  "Purnima" / "Amavasya" rather than the redundant "Shukla Purnima" /
+  "Krishna Amavasya".
+- **Added `src/astro/muhurta.test.ts` (21 tests)** — the module previously had
+  none. Covers the syzygy anchors, analytic day length, solar-noon symmetry,
+  polar null-handling, southern hemisphere, window conventions and
+  non-overlap, tithi continuity (allowing legitimate skips/repeats), field
+  ranges, weekday/date agreement, rating spread and all six activities.
+- **Fixed: Rahu Kaal shown under the wrong weekday (the "drastically different
+  values" report).** `MuhurtaCard` formatted the UTC-pinned civil date with
+  `toLocaleDateString` **without** `timeZone: "UTC"`. In any browser west of UTC
+  the heading rendered the *previous* day — so Friday's Rahu Kaal (4th day-part,
+  ~11:15) appeared under a "Thursday" heading, where a panchang would say ~14:00.
+  The computed times were right; the label was a day out. The same bug was fixed
+  in the admin festival list.
+- **Fixed: stale timezone across DST.** The Muhurta form resolved the UTC offset
+  once, when the city was picked, and reused it for the whole range — so a search
+  spanning a DST transition (or any date change after picking) was an hour off.
+  `MuhurtaLocation` now takes an optional IANA `zone` and resolves the offset
+  **per date**; the form tracks the picked city's zone, recomputes on date change,
+  and drops it if latitude/longitude/offset are hand-edited.
+- **Fixed: inverted windows on a mismatched offset.** Sunrise and sunset were
+  found independently within the local day, so if the declared UTC offset was
+  badly wrong for the longitude (hand-entered coordinates) the sun could already
+  be up at local midnight — the first sunset found belonged to the previous day,
+  the daylight span went negative, and every derived window came out
+  end-before-start (e.g. "Rahu Kaal 14:55–13:36"). Sunset is now paired with the
+  sunrise it follows.
+- **Verified against published values:** Rahu Kaal for Delhi on Mon 2026-08-03
+  computes 07:25–09:05 against a published 07:24–09:05, and the day-part index
+  matches the classical Sunday→Saturday order (8,2,7,5,6,4,3) for every weekday.
+- Files: `src/astro/muhurta.ts`, `src/astro/muhurta.test.ts`,
+  `src/components/MuhurtaView.tsx`, `src/components/AdminView.tsx`.
+
+## Brand & positioning
+
+- **New tagline** — "**Understand the sky. Align your space. Honour the ritual.**"
+  The old "Vedic astrology — compute, understand, learn" described only one of
+  the portal's four pillars; the new line covers astrology (sky), Vastu (space)
+  and temples/poojas/reminders (ritual) in three invitations.
+- Applied consistently to the header tagline, the browser/page **title**
+  ("Aistrology · Vedic Astrology, Vastu, Temples & Learning") and the **meta
+  description**, which now mention Vastu, temples, auspicious days and learning
+  for search results.
+- **Provider types (Astrologer / Priest / Both)** — consultation offers now
+  declare what they are (`provider_type`, default `astrologer`, added by an
+  idempotent migration that backfilled existing rows). Providers pick it in their
+  profile form; the directory shows a type badge per card and an
+  **All / Astrologers / Priests** filter with live counts. "Both" providers match
+  either filter, and invalid values fall back to `astrologer` server-side.
+- **Consultations & Astro Chat added to the pitch** — the hero was still missing
+  two real pillars. Added bullets for **Consultations** (one-on-one sessions with
+  approved astrologers and priests) and **Astro Chat** (chart-grounded Q&A), and
+  put Consultations in the eyebrow and intro. The Consultation page itself was
+  updated to match — it now welcomes **astrologers and priests** ("Are you an
+  astrologer or a priest?", "Find an astrologer or priest"), which the provider
+  model already supported via free-text specialities.
+- **Hero copy reworked to match** — the landing hero pitched astrology alone,
+  which undersold the new tagline. The eyebrow is now
+  "Jyotisha · Vastu · Temples · Learning", the intro paragraph walks from the
+  chart outward (Vastu → auspicious days → rituals/festivals → temples →
+  lessons), and the feature bullets were rebalanced from 5 astrology-only items
+  to 6 covering every pillar. The signed-out CTA copy was broadened to match.
+- Files: `src/App.tsx`, `index.html`, `src/styles.css` (tagline kept on one line;
+  wraps naturally below 700px).
+
+## Landing page (UX)
+
+- **Marketing sections are now visitor-only.** The pricing/plans block, the
+  Temple Affiliation section and the long-form "Decoding the Patterns" article
+  render only for **signed-out** visitors. Once signed in, the home screen is
+  just the hero + birth form, so returning users land straight on the task.
+  Plans stay available in the **Plans & Billing** tab.
+- **Removed the header Temple button** — the temple portal is reached from the
+  Temple Affiliation section on the landing page, so the header nav is now just
+  Reminders · Consultation · Admin.
+- Files: `src/App.tsx`.
+
+## Profile switcher (UX)
+
+- **Separated "profile" from "account".** Switching the profile (chart) you're
+  viewing used to be buried in the account/auth dropdown (branded with the *user*,
+  not the profile), with no indication of which profile was active. There's now a
+  dedicated **profile switcher pill** in the header that always shows the active
+  profile's name, plus a dropdown to **switch** (active profile marked ✓),
+  **search** (for users with many profiles), **save** an unsaved chart, create a
+  **＋ New chart**, and delete. The account menu is now just identity + sign out.
+- **Phase 2 polish:** inline **rename** (via `PUT /api/charts/:id`), a
+  **Recent / A–Z** sort toggle, and full **keyboard navigation** (↑/↓ to move the
+  highlight, Enter to open, Esc to close).
+- **Header layout fix:** the signed-in header used to overflow into a tall
+  (~230px) wrapped row of controls floating under the brand. Reworked into two
+  clean zones — the **current profile** shown prominently on the right of the
+  brand row (**larger, bold name** + a muted birth-detail subtitle, filling the
+  old empty gap), and a right-aligned **nav cluster** below (~144px; tidy at
+  desktop/tablet/mobile). The active profile in the switcher dropdown is now
+  clearly highlighted (gold ✓ + gold label + a gold left accent bar).
+- **Labeled identity cluster:** the header's top-right is now a single aligned
+  cluster with explicit labels — **"Viewing profile"** over the profile switcher
+  (with the birth-detail subtitle) and **"Signed in as"** over the notification
+  bell + account pill, separated by a divider. All three controls share a uniform
+  42px height, and the nav row (Export/Reminders/Consultation/Temple/Admin) fits
+  on one line. Responsive rules keep the cluster tidy and un-clipped on mobile.
+- Files: `src/components/ProfileSwitcher.tsx` (+ `.test.tsx`, 8 tests),
+  `src/components/AccountBar.tsx` (slimmed), `src/api/client.ts` (`renameChart`),
+  `src/App.tsx`, `src/styles.css`.
+
+## Astrology Lessons drawer
+
+- **A slide-out lessons course, available from anywhere** (even signed-out, on
+  the landing page) via a **📖 Lessons** handle on the right edge. The existing 9
+  lessons were upgraded into a chaptered course with **Beginner / Advanced / Pro**
+  tracks, per-track filters and completion counts, an overall progress bar,
+  chapter reader with **Prev/Next** (Next marks read), a "Mark complete" toggle,
+  and **"✨ See it live" deep links** into the matching app tab (Kundli, Dasha,
+  Predictions, Remedies) when a chart is loaded. Progress persists per user in
+  localStorage. The full-page **Learn** tab remains for long-form reading.
+- **Chart-craft chapters with visuals** — the course grew to 15 chapters with
+  six new illustrated ones. Beginner: *How a Chart Is Cast* (birth-data → chart
+  flow diagram), *Chart Styles — North & South Indian* (both layouts as labelled
+  SVG diagrams: fixed houses vs fixed signs, Lagna markers, reading order), and
+  *Reading a Chart, Step by Step* (a five-step routine with an annotated worked
+  example). Advanced: *Divisional Charts (Vargas) & the Navamsa* (a 30° sign
+  splitting into nine slices) and *Transits & Sade Sati* (Saturn's three-phase
+  path over the Moon). Pro: *Ashtakoota Matchmaking* (the eight kootas as
+  weighted bars summing to 36). Diagrams are themed SVGs (`LessonVisuals.tsx`)
+  rendered in both the drawer and the Learn tab via a `visual` field on lesson
+  sections; each new chapter deep-links to its live tool (chart/varga selector,
+  Transit tab, Marriage Match).
+- **Worked examples mode** — the drawer gained a second mode with **seven
+  end-to-end examples** (chart casting → chart reading), each a six-step visual
+  walkthrough on a mini-Kundli **computed live by the app's engine**, with
+  per-step house/planet highlighting and dignity colouring. The personas teach
+  distinct points: the basic routine, sunrise births + dignity extremes, the same
+  instant in another city (place moves the Lagna), the same day six hours later
+  (time moves the Lagna), and a subtle 12th-house Lagna lord.
+- **South Indian style in the examples** — every walkthrough now has a
+  **North/South toggle** whose step text adapts to the style (fixed houses vs.
+  "find the ◢ stroke and count clockwise"), plus **two new South-first examples**:
+  *Kiran* (Hyderabad sunrise — a three-planet Lagna cluster) and *Lakshmi*
+  (Madurai — Mercury exalted and Venus debilitated in the **same sign box**,
+  which the fixed-sign grid makes obvious).
+- Files: `src/components/LessonsDrawer.tsx`, `src/components/LessonVisuals.tsx`,
+  `src/components/LessonExamples.tsx`, `src/data/lessons.ts` (levels retyped +
+  reading time + deep links), `src/components/LearnView.tsx`, `src/App.tsx`,
+  `src/styles.css`.
+- **Vastu course** — the drawer gained a **subject switcher** (☸ Astrology /
+  🏠 Vastu) and a second seven-chapter course covering what Vastu is, the eight
+  directions & five elements, the nine zones & Brahmasthan, room-by-room
+  placement, plot shape/slope/entrance, doshas & remedies, and Vastu-meets-
+  Jyotisha. The placement rules taught are the same ones the Vastu analyser
+  scores against, so lesson and tool never disagree. Four new diagrams
+  (direction compass, zone mandala, placement table, slope). Track counts and
+  progress are per-subject; every chapter deep-links to the Vastu tab.
+- Files: `src/data/vastuLessons.ts`, `src/components/LessonVisuals.tsx`,
+  `src/components/LessonsDrawer.tsx`, `src/styles.css`.
+- See [lessons.md](lessons.md).
+
+## Notes (per-profile, Pro/Premium)
+
+- **Private per-profile notes** for Pro & Premium users — especially for Premium
+  users managing many profiles (consultation prep, observations, follow-ups). A
+  **Notes** tab lists the loaded profile's notes with add / inline-edit / delete;
+  switching profiles switches the notes.
+- Notes attach to a **saved chart**; the tab prompts to save first if the chart
+  isn't saved. Free users don't see the tab and the API returns `403`; behind the
+  `notes` feature flag. Scoped to the owner (SQL-enforced; cross-user → `404`).
+- New `notes` table; endpoints `GET`/`POST`/`PUT`/`DELETE /api/notes`.
+- Files: `server/notes.ts`, `server/db.ts`, `server/features.ts`,
+  `src/components/NotesView.tsx`, `src/api/client.ts`, `src/App.tsx`.
+- See [notes.md](notes.md).
+
+## Admin-editable plan quotas
+
+- The per-plan **daily quotas** (Astro Chat, Justify, Translate, Vastu, new
+  charts, bookings) were hardcoded; they are now **DB-backed and editable** in
+  **Admin console → Plan Limits** (a plan × feature grid). Saved to the `quotas`
+  global setting and merged over the code defaults, applied **live** (no restart),
+  with a "Reset to defaults". `0` blocks a feature for a plan.
+- Endpoints `GET`/`PUT /api/admin/quotas` + `POST /api/admin/quotas/reset`.
+- Files: `server/rateLimit.ts` (defaults + live table), `server/quotas.ts`
+  (load/save/reset), `server/admin.ts`, `src/components/AdminView.tsx`
+  (`LimitsSection`), `src/api/client.ts`. See
+  [rate-limiting.md](rate-limiting.md#editing-the-limits-admin).
+
+## Export / plan gating
+
+- The PDF **Export** is shown to free users as a **blurred teaser** behind an
+  "Upgrade to unlock" overlay (instead of being hidden), with the Print button
+  swapped for an upgrade CTA. (`src/components/ExportReport.tsx`)
+
+---
+
+## New/changed environment variables
+
+```
+# Admin module
+ADMIN_EMAIL=            ADMIN_PASSWORD=            ADMIN_ACCESS_CODE=
+# Reminder email (optional; falls back to in-app)
+RESEND_API_KEY=         REMINDER_FROM_EMAIL=
+```
+
+See `.env.example` for the full list.
+
+## New database tables
+
+`consultation_offers`, `consultation_bookings`, `notifications`,
+`global_settings`, `temples`, `temple_services`, `temple_events`,
+`reminders`, `festivals`, `festival_subscriptions`, `promo_codes`,
+`promo_redemptions`, `contact_messages`, `billing_events`,
+`chat_conversations`, `chat_messages`, `notes`. New `users` columns
+include `role`, `suspended`, `plan_expires_at`, `plan_source` (now also takes
+`'disputed'`), and (from earlier work) `email_verified`, `total_charts_created`.
+All added idempotently in `initDb()`.

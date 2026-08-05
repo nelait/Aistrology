@@ -1,0 +1,132 @@
+import { Chart } from "../astro/types";
+import { HealthResult } from "../astro/health";
+import { RASHIS, NAKSHATRAS, GRAHA_BY_NAME } from "../astro/constants";
+import { formatDegInSign, formatTz } from "../utils/format";
+import NorthChart from "./NorthChart";
+import SouthChart from "./SouthChart";
+
+interface Props {
+  chart: Chart;
+  result: HealthResult;
+  label: string;
+  open: boolean;
+  onClose: () => void;
+  style: "north" | "south";
+}
+
+const SEVERITY_COLORS: Record<string, string> = { high: "#ef4444", moderate: "#eab308", low: "#22c55e" };
+
+export default function HealthExportReport({ chart, result, label, open, onClose, style }: Props) {
+  if (!open) return null;
+
+  const ChartFor = ({ chart: c }: { chart: Chart }) =>
+    style === "south" ? <SouthChart chart={c} mode="D1" /> : <NorthChart chart={c} mode="D1" />;
+
+  const b = chart.birth;
+  const moon = chart.planets.find((p) => p.planet === "Moon")!;
+
+  return (
+    <div className="export-overlay" onClick={onClose}>
+      <div className="export-shell" onClick={(e) => e.stopPropagation()}>
+        <div className="export-actions">
+          <div />
+          <div>
+            <button className="primary" onClick={() => window.print()}>Print / Save as PDF</button>
+            <button className="ghost" onClick={onClose}>Close</button>
+          </div>
+        </div>
+
+        <div className="chart-report match-report">
+          <header className="report-head">
+            <h1>☸ Aistrology — Health Analysis Report</h1>
+            <p className="report-native"><strong>{label}</strong></p>
+          </header>
+
+          <section className="career-report-profile">
+            <div>
+              <p>
+                {String(b.day).padStart(2, "0")}/{String(b.month).padStart(2, "0")}/{b.year}{" "}
+                · {String(b.hour).padStart(2, "0")}:{String(b.minute).padStart(2, "0")}{" "}
+                · {b.placeLabel} ({formatTz(b.tzOffsetHours)})
+              </p>
+              <p className="muted">
+                Lagna: {RASHIS[chart.ascendantSign].name} · Moon: {RASHIS[moon.signIndex].name}, {NAKSHATRAS[moon.nakshatraIndex].name} (pada {moon.pada})
+              </p>
+              <p className="muted">Constitution: {result.constitution} · Vitality: {result.vitalityScore}/100</p>
+            </div>
+            <div className="match-report-chart"><ChartFor chart={chart} /></div>
+          </section>
+
+          <section>
+            <h2>Constitution & Vitality</h2>
+            <p><strong>Constitution:</strong> {result.constitutionDescription}</p>
+            <p><strong>Vitality ({result.vitalityScore}/100):</strong> {result.vitalityVerdict}</p>
+          </section>
+
+          {result.areas.length > 0 && (
+            <section>
+              <h2>Potential Health Vulnerabilities</h2>
+              <table className="report-table">
+                <thead>
+                  <tr><th>Area</th><th>Severity</th><th>Body Parts</th><th>Indication</th><th>Remedy</th></tr>
+                </thead>
+                <tbody>
+                  {result.areas.map((a) => (
+                    <tr key={a.name}>
+                      <td><strong>{a.icon} {a.name}</strong></td>
+                      <td><span style={{ color: SEVERITY_COLORS[a.severity], fontWeight: 700 }}>{a.severity.toUpperCase()}</span></td>
+                      <td>{a.bodyParts.join(", ")}</td>
+                      <td>{a.indication}</td>
+                      <td>{a.remedy}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+
+          <section>
+            <h2>Astrological Factors</h2>
+            {result.factors.map((f) => (
+              <div key={f.name} className="report-item">
+                <h3>{f.name}</h3>
+                <p className="muted">{f.description}</p>
+                <p>{f.detail}</p>
+              </div>
+            ))}
+          </section>
+
+          <section>
+            <h2>General Remedies</h2>
+            <ol>
+              {result.generalRemedies.map((r, i) => <li key={i}>{r}</li>)}
+            </ol>
+          </section>
+
+          <section>
+            <h2>Planetary Positions</h2>
+            <table className="report-table">
+              <thead><tr><th>Graha</th><th>Sign</th><th>Degree</th><th>Ho.</th><th>Nakshatra</th><th>Dignity</th></tr></thead>
+              <tbody>
+                {chart.planets.map((p) => (
+                  <tr key={p.planet}>
+                    <td>{GRAHA_BY_NAME[p.planet].symbol} {p.planet}{p.retrograde ? " ℞" : ""}</td>
+                    <td>{RASHIS[p.signIndex].name}</td>
+                    <td>{formatDegInSign(p.degreeInSign)}</td>
+                    <td>{p.house}</td>
+                    <td>{NAKSHATRAS[p.nakshatraIndex].name} (p{p.pada})</td>
+                    <td>{p.dignity}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+
+          <footer className="report-foot">
+            Generated by Aistrology · Health Analysis · for learning and reflection only. <strong>This is not medical advice.</strong> Always consult qualified healthcare professionals.
+          </footer>
+        </div>
+      </div>
+    </div>
+  );
+}
