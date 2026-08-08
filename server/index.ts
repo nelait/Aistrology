@@ -95,8 +95,20 @@ function assertDatabaseConfigured(): void {
   const unresolvedRef = raw !== undefined && raw.includes("${{");
   if (raw && !pointsAtLocalhost && !unresolvedRef) return;
 
+  // Show what actually arrived (host only — never the password) so the cause is
+  // visible from the deploy log instead of being guessed at.
+  let seen: string;
+  if (raw === undefined) {
+    seen = "<not set — using the built-in localhost default>";
+  } else {
+    let host = "<unparseable>";
+    try { host = new URL(raw).hostname || "<empty host>"; } catch { /* keep */ }
+    seen = `host="${host}"  (length ${raw.length}, starts "${raw.slice(0, 12)}…")`;
+  }
+
   console.error(
     "\nFATAL: the database is not configured for production.\n" +
+    `  DATABASE_URL as received by the app: ${seen}\n` +
     (raw === undefined
       ? "  DATABASE_URL is not set, so the server fell back to localhost —\n" +
         "  which is nothing at all inside a container.\n"
