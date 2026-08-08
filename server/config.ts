@@ -4,7 +4,29 @@ import "dotenv/config";
 // only works once you register apps with Google / GitHub and supply the client
 // id + secret; without them those buttons return a clear "not configured" error.
 
+/**
+ * Are we running on a hosting platform? Detected from the markers each provider
+ * injects automatically.
+ *
+ * This exists so that FORGETTING `NODE_ENV=production` cannot produce an
+ * insecure deploy. Keying only off NODE_ENV meant a hosted app with it unset
+ * would serve no SPA, skip the database guard and — worst of all — leave the
+ * passwordless dev login ENABLED in public.
+ */
+const onHostingPlatform = Boolean(
+  process.env.RAILWAY_ENVIRONMENT ||   // Railway
+  process.env.RAILWAY_SERVICE_ID ||
+  process.env.RENDER ||                 // Render
+  process.env.FLY_APP_NAME ||           // Fly.io
+  process.env.K_SERVICE ||              // Google Cloud Run
+  process.env.DYNO,                     // Heroku
+);
+
+/** Treat an explicit NODE_ENV=production OR any hosted environment as production. */
+const isProduction = process.env.NODE_ENV === "production" || onHostingPlatform;
+
 export const config = {
+  onHostingPlatform,
   port: Number(process.env.PORT ?? 8787),
   // Origin the browser uses (the Vite app). OAuth redirects and the post-login
   // bounce go here; Vite proxies /auth and /api to this server.
@@ -20,18 +42,17 @@ export const config = {
   // A local, provider-less login for development so the signed-in experience is
   // usable without registering OAuth apps. Never enable in production — hence it
   // defaults OFF there and must be opted into explicitly.
-  allowDevLogin:
-    process.env.NODE_ENV === "production"
-      ? process.env.ALLOW_DEV_LOGIN === "true"
-      : (process.env.ALLOW_DEV_LOGIN ?? "true") !== "false",
-  isProduction: process.env.NODE_ENV === "production",
+  allowDevLogin: isProduction
+    ? process.env.ALLOW_DEV_LOGIN === "true"
+    : (process.env.ALLOW_DEV_LOGIN ?? "true") !== "false",
+  isProduction,
   // Serve the built SPA from this process (single-origin production deploys such
   // as Railway). Defaults on in production; set SERVE_STATIC=false to disable
   // when the frontend is hosted separately on a CDN.
   serveStatic:
     process.env.SERVE_STATIC !== undefined
       ? process.env.SERVE_STATIC === "true"
-      : process.env.NODE_ENV === "production",
+      : isProduction,
   // Run the reminder/promo-expiry sweep inside this process on an hourly timer.
   // Correct for a single always-on instance. Set RUN_SCHEDULER=false and drive
   // `npm run scheduler:run` from a platform cron once you run more than one
