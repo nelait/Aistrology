@@ -25,12 +25,32 @@ const onHostingPlatform = Boolean(
 /** Treat an explicit NODE_ENV=production OR any hosted environment as production. */
 const isProduction = process.env.NODE_ENV === "production" || onHostingPlatform;
 
+/**
+ * Public origin of the app. Used for OAuth callbacks, email-verification links
+ * and Stripe return URLs — so pointing at localhost in production silently
+ * strands users mid-flow.
+ *
+ * Railway publishes the generated domain as RAILWAY_PUBLIC_DOMAIN (hostname
+ * only), so fall back to it rather than to localhost when hosted. An explicit
+ * APP_URL always wins — set it once a custom domain is live.
+ */
+function resolveAppUrl(): string {
+  const explicit = process.env.APP_URL?.trim();
+  if (explicit) return explicit.replace(/\/+$/, ""); // tolerate a trailing slash
+  const host =
+    process.env.RAILWAY_PUBLIC_DOMAIN ||
+    process.env.RENDER_EXTERNAL_HOSTNAME ||
+    process.env.FLY_APP_NAME && `${process.env.FLY_APP_NAME}.fly.dev`;
+  if (host) return `https://${host}`;
+  return "http://localhost:5173";
+}
+
 export const config = {
   onHostingPlatform,
   port: Number(process.env.PORT ?? 8787),
   // Origin the browser uses (the Vite app). OAuth redirects and the post-login
   // bounce go here; Vite proxies /auth and /api to this server.
-  appUrl: process.env.APP_URL ?? "http://localhost:5173",
+  appUrl: resolveAppUrl(),
   sessionSecret: process.env.SESSION_SECRET ?? "dev-insecure-secret-change-me",
   // Secret used to encrypt stored LLM API keys at rest (falls back to the
   // session secret in dev). Set your own in production.
