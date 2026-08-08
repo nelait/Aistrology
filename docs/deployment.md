@@ -2,9 +2,13 @@
 
 Production hosting for Aistrology.
 
-> **Railway is the supported path and the app is ready for it** — see
-> [Deploying to Railway](#deploying-to-railway) for step-by-step instructions.
-> The comparison with Render / Cloud Run further down is kept for context.
+> **Railway is the supported path, and the app is deployed on it.**
+> For step-by-step instructions and a troubleshooting guide covering every
+> failure hit during the real deployment, see
+> **[railway-deployment.md](railway-deployment.md)**.
+>
+> This page covers *why* Railway, the constraints that shaped the choice, the
+> comparison with Render / Cloud Run, and the scale-out plan.
 
 ## The app in one paragraph
 
@@ -36,76 +40,24 @@ endpoint with the raw body** ([`server/index.ts`](../server/index.ts)).
 
 ## Deploying to Railway
 
-The app deploys as **one always-on service** that serves both the API and the
-built SPA, plus a **Postgres** service. One origin means the same-site session
-cookie and the client's relative `fetch("/api/…")` calls work with no CORS.
+Full instructions live in **[railway-deployment.md](railway-deployment.md)** —
+service layout, every variable, the verification checklist, and a troubleshooting
+section covering each failure encountered in practice.
+
+The short version: one always-on service serving the API *and* the built SPA
+(single origin, so the session cookie and relative `fetch` paths just work), plus
+a Postgres service in the **same** project.
 
 ### What is already wired up
 
 | Piece | Where |
 | ----- | ----- |
-| Build + start + healthcheck | [`railway.json`](../railway.json) — `npm run build`, `npm start`, health `/api/health` |
-| Production start script | `npm start` → `tsx server/index.ts` (`tsx` is a **runtime** dependency, so it survives dev-dependency pruning) |
-| Static SPA serving | `server/index.ts` serves `dist/` + SPA fallback when `NODE_ENV=production` (override with `SERVE_STATIC`) |
-| Postgres TLS | `server/db.ts` enables TLS automatically for remote hosts, and skips it for `localhost` / `*.railway.internal` |
-| Safety | Dev login is **off by default** in production and must be explicitly re-enabled |
-| Preflight | `npm run deploy:check` fails the build on unsafe or missing config |
-
-### Steps
-
-1. **Create the project and database**
-   ```bash
-   npm i -g @railway/cli
-   railway login
-   railway init                 # or: railway link  (existing project)
-   railway add --database postgres
-   ```
-
-2. **Set the variables** (Railway dashboard → service → Variables, or CLI):
-   ```bash
-   railway variables \
-     --set NODE_ENV=production \
-     --set 'DATABASE_URL=${{Postgres.DATABASE_URL}}' \
-     --set "SESSION_SECRET=$(openssl rand -hex 32)" \
-     --set "LLM_ENC_SECRET=$(openssl rand -hex 32)" \
-     --set ADMIN_EMAIL=admin@yourdomain.com \
-     --set "ADMIN_PASSWORD=$(openssl rand -base64 18)" \
-     --set "ADMIN_ACCESS_CODE=$(openssl rand -base64 12)"
-   ```
-   Do **not** set `PORT` — Railway injects it and the server already reads it.
-
-3. **Generate the public domain**, then set `APP_URL` to it (no trailing slash):
-   ```bash
-   railway domain
-   railway variables --set APP_URL=https://<the-domain-it-printed>
-   ```
-   `APP_URL` is used for OAuth redirects, the post-login bounce and Stripe
-   return URLs, so it must match the domain users actually visit.
-
-4. **Check the config before shipping**
-   ```bash
-   railway run npm run deploy:check
-   ```
-   Exits non-zero on blocking problems (placeholder secrets, missing
-   `DATABASE_URL`, non-HTTPS `APP_URL`, dev login left on…).
-
-5. **Deploy**
-   ```bash
-   railway up
-   ```
-   Schema creation is idempotent (`initDb()` runs on boot), so there is no
-   separate migration step. The super-admin is seeded from the `ADMIN_*` vars.
-
-6. **Post-deploy**
-   - Stripe: point the webhook at `https://<domain>/api/billing/webhook` and set
-     `STRIPE_WEBHOOK_SECRET` (plus keys and price ids). Subscribe to
-     `checkout.session.completed`, `customer.subscription.updated`,
-     `customer.subscription.deleted`, `invoice.payment_failed`,
-     `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed`.
-   - OAuth: add `https://<domain>/auth/google/callback` (and GitHub) as
-     redirect URIs.
-   - Turn on an AI engine in **Admin → AI / LLM** or Astro Chat and Justify stay
-     hidden. See [astro-chat.md](astro-chat.md#enabling--operating).
+| Build + start + healthcheck | [`railway.json`](../railway.json) |
+| Production start | `npm start` -> `tsx server/index.ts` (`tsx` is a runtime dependency, so it survives dev-dependency pruning) |
+| Static SPA serving | `server/index.ts` serves `dist/` with an SPA fallback in production (`SERVE_STATIC` overrides) |
+| Postgres TLS | `server/db.ts` — automatic for remote hosts, skipped for `localhost` / `*.railway.internal` |
+| Environment detection | `RAILWAY_ENVIRONMENT` etc. imply production, so a missing `NODE_ENV` can't leave dev login enabled |
+| Preflight | `npm run deploy:check` exits non-zero on unsafe or missing config |
 
 ### Operational notes
 
@@ -115,6 +67,9 @@ cookie and the client's relative `fetch("/api/…")` calls work with no CORS.
   that limit.
 - **Leave "serverless / app sleeping" off** while the in-process scheduler is
   active: a sleeping process never fires the timer.
+- **Database:** Railway Postgres is a container + volume with backups, not
+  managed HA. Fine for launch; swap in Neon/Supabase/RDS later by changing
+  `DATABASE_URL` (TLS is handled automatically).
 
 ### Scheduler as a cron service (needed before scaling out)
 
@@ -148,9 +103,6 @@ should move to Redis before you raise the replica count.
 
 > Railway cron requires the process to **exit**; a long-running command would
 > block the next scheduled run. `scripts/run-scheduled.ts` exits explicitly.
-- **Database:** Railway Postgres is a container + volume with backups, not
-  managed HA. Fine for launch; swap in Neon/Supabase/RDS later by changing
-  `DATABASE_URL` (TLS is handled automatically).
 
 ### Rough cost
 

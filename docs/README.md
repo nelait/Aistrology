@@ -22,8 +22,10 @@ Guides for the features and operations of the Aistrology app.
 - [Rate Limiting](rate-limiting.md) — per-plan daily quotas and the global limiter.
 - [Vastu](vastu.md) — the Vastu analysis feature.
 - [Doshas](doshas.md) — chart-affliction detection rules and remedies.
-- [Deployment](deployment.md) — production hosting options (Railway / Render /
-  Cloud Run), costs, and the changes needed to run safely (analysis; not yet decided).
+- [Railway deployment](railway-deployment.md) — **step-by-step runbook** for the
+  live deployment, plus troubleshooting for every failure hit in practice.
+- [Deployment](deployment.md) — why Railway, the constraints behind the choice,
+  the Render / Cloud Run comparison, and the scale-out plan.
 
 ## Quick start (local)
 

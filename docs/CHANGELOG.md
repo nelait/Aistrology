@@ -173,7 +173,36 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
-## Railway deployment
+## Railway deployment — shipped, plus fixes found doing it
+
+The app is **live on Railway**. Getting there surfaced several real defects,
+all fixed and documented in the new runbook
+**[railway-deployment.md](railway-deployment.md)**:
+
+- **Build failed — `tsc: command not found`.** Railway sets
+  `NPM_CONFIG_PRODUCTION=true`, so `npm install` skipped `devDependencies` where
+  `typescript` and `vite` live. Build command now passes `--include=dev`.
+- **Build failed — `EBUSY … rmdir '/app/node_modules/.cache'`.** Railway mounts a
+  cache *inside* `node_modules`; `npm ci` deletes the tree wholesale and can't
+  remove the mount. Switched to `npm install`.
+- **Silent localhost fallback.** An unset/stale `DATABASE_URL` produced only an
+  `ECONNREFUSED 127.0.0.1:5432` stack trace. Startup now fails fast, naming the
+  received host, value length and prefix, and distinguishing *unset* /
+  *localhost* / *unresolved `${{ }}` reference*.
+- **Missing `NODE_ENV` was dangerous.** Production was inferred solely from
+  `NODE_ENV`, so forgetting it on a host left the SPA unserved, the DB guard
+  skipped and — worst — **passwordless dev login enabled in public**. Production
+  is now also inferred from `RAILWAY_*` / `RENDER` / `FLY_APP_NAME` /
+  `K_SERVICE` / `DYNO`.
+- **`APP_URL` defaulted to localhost**, breaking OAuth, email-verification and
+  Stripe redirects. It now derives from the platform's public domain when unset.
+- **🔴 The startup banner logged the database password.** Deploy logs get pasted
+  into chats and screenshots — the connection string is now redacted.
+- Also added `.railwayignore` (no `.git` here, so `railway up` would otherwise
+  have uploaded the local `.env`), and redacted working admin credentials from
+  `docs/admin-console.md` before the repo went public.
+
+## Railway deployment (setup)
 
 - **The app now deploys as a single always-on service.** `server/index.ts` serves
   the built SPA from `dist/` with an SPA fallback when `NODE_ENV=production`
