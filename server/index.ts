@@ -82,7 +82,39 @@ if (config.serveStatic) {
   });
 }
 
+/**
+ * Fail fast, and legibly, when the database is misconfigured in production.
+ * Without this the localhost fallback is used inside the container and the only
+ * symptom is an ECONNREFUSED stack trace against 127.0.0.1:5432, which says
+ * nothing about the actual cause (an unset or unresolved DATABASE_URL).
+ */
+function assertDatabaseConfigured(): void {
+  if (!config.isProduction) return;
+  const raw = process.env.DATABASE_URL;
+  const pointsAtLocalhost = /(^|@|\/\/)(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(config.databaseUrl);
+  const unresolvedRef = raw !== undefined && raw.includes("${{");
+  if (raw && !pointsAtLocalhost && !unresolvedRef) return;
+
+  console.error(
+    "\nFATAL: the database is not configured for production.\n" +
+    (raw === undefined
+      ? "  DATABASE_URL is not set, so the server fell back to localhost —\n" +
+        "  which is nothing at all inside a container.\n"
+      : unresolvedRef
+        ? "  DATABASE_URL still contains an unresolved reference (${{ ... }}).\n" +
+          "  It was stored as literal text instead of a variable reference.\n"
+        : "  DATABASE_URL points at localhost, which is not reachable from the container.\n") +
+    "\n  On Railway: open the APP service (not Postgres) -> Variables, and add\n" +
+    "      DATABASE_URL = ${{Postgres.DATABASE_URL}}\n" +
+    "  using the variable-reference picker so it resolves to the Postgres service.\n" +
+    "  Both services must live in the SAME Railway project.\n" +
+    "  Verify locally first with:  railway run npm run deploy:check\n",
+  );
+  process.exit(1);
+}
+
 async function start() {
+  assertDatabaseConfigured();
   await initDb();
   await seedAdmin();
   await loadQuotas();
