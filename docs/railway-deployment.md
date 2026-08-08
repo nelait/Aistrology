@@ -180,9 +180,9 @@ Then check `https://<domain>/api/health` → `{"ok":true,"db":"up"}`.
    `charge.dispute.closed`. Test keys need test price ids; live needs live.
 4. **OAuth** — add `https://<domain>/auth/google/callback` (and the GitHub
    equivalent) as authorised redirect URIs.
-5. **Custom domain** — Settings → Networking → Custom Domain, then set `APP_URL`
-   explicitly and update the OAuth redirect URIs and Stripe webhook URL, which
-   are registered externally and do not follow automatically.
+5. **Custom domain** — see **[custom-domain.md](custom-domain.md)** for the full
+   checklist (DNS and the apex-CNAME catch, `APP_URL`, OAuth redirect URIs, and
+   the Stripe webhook's *new* signing secret).
 
 ---
 

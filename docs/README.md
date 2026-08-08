@@ -24,6 +24,8 @@ Guides for the features and operations of the Aistrology app.
 - [Doshas](doshas.md) — chart-affliction detection rules and remedies.
 - [Railway deployment](railway-deployment.md) — **step-by-step runbook** for the
   live deployment, plus troubleshooting for every failure hit in practice.
+- [Changing the domain](custom-domain.md) — checklist for moving to a custom
+  domain (DNS, `APP_URL`, OAuth redirect URIs, Stripe webhook secret).
 - [Deployment](deployment.md) — why Railway, the constraints behind the choice,
   the Render / Cloud Run comparison, and the scale-out plan.
 

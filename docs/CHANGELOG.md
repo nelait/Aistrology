@@ -173,6 +173,17 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Custom-domain runbook
+
+- Added **[custom-domain.md](custom-domain.md)** — a reusable checklist for
+  pointing the app at a custom domain or moving it later. Confirms **no code
+  changes are needed** (the session cookie sets no explicit `domain`, so it
+  follows the host; nothing hardcodes a hostname), then covers DNS including the
+  **apex-CNAME restriction** and the two ways round it, the required `APP_URL`
+  update, OAuth redirect URIs, and the Stripe webhook's **new per-endpoint
+  signing secret** — the one whose omission fails silently. Includes a
+  verification list, rollback, and a symptom→cause table.
+
 ## Railway deployment — shipped, plus fixes found doing it
 
 The app is **live on Railway**. Getting there surfaced several real defects,
