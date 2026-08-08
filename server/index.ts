@@ -83,6 +83,21 @@ if (config.serveStatic) {
 }
 
 /**
+ * Connection string with the password removed, safe to print.
+ * Deploy logs are routinely pasted into chats, issues and screenshots, so the
+ * startup banner must never carry the credential.
+ */
+function redactDbUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.password) u.password = "****";
+    return u.toString();
+  } catch {
+    return "<unparseable connection string>";
+  }
+}
+
+/**
  * Fail fast, and legibly, when the database is misconfigured in production.
  * Without this the localhost fallback is used inside the container and the only
  * symptom is an ECONNREFUSED stack trace against 127.0.0.1:5432, which says
@@ -142,7 +157,9 @@ async function start() {
       config.runScheduler ? "scheduler✓" : "scheduler✗(cron)",
     ].join(" ");
     console.log(`Aistrology API on http://localhost:${config.port}  [${flags}]`);
-    console.log(`Postgres: ${config.databaseUrl}`);
+    // NEVER log the connection string itself — it carries the password, and
+    // deploy logs get copied into chats, issues and screenshots.
+    console.log(`Postgres: ${redactDbUrl(config.databaseUrl)}`);
     console.log(`App origin (APP_URL): ${config.appUrl}`);
     if (config.sessionSecret === "dev-insecure-secret-change-me") {
       console.warn("⚠  Using the default SESSION_SECRET — set one in .env for anything real.");
