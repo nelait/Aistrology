@@ -3,6 +3,8 @@ import { BirthData } from "../astro/types";
 import { City, searchCities, cityZone } from "../data/cities";
 import { zoneOffsetHours } from "../astro/timezone";
 import { formatTz } from "../utils/format";
+import { celebrityToBirth, type Celebrity } from "../data/celebrities";
+import CelebrityPicker from "./CelebrityPicker";
 
 interface Props {
   onSubmit: (data: BirthData) => void;
@@ -47,6 +49,7 @@ export default function BirthForm({ onSubmit, initial }: Props) {
   const [zone, setZone] = useState<string | null>(null);
   const [showList, setShowList] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showCelebs, setShowCelebs] = useState(false);
 
   const matches = useMemo(() => searchCities(placeQuery), [placeQuery]);
 
@@ -209,7 +212,20 @@ export default function BirthForm({ onSubmit, initial }: Props) {
             {ex.name}
           </button>
         ))}
+        <button type="button" className="chip chip-more" onClick={() => setShowCelebs(true)}>
+          ⭐ Other celebrities
+        </button>
       </div>
+
+      {showCelebs && (
+        <CelebrityPicker
+          onClose={() => setShowCelebs(false)}
+          onPick={(c: Celebrity) => {
+            loadExample(celebrityToBirth(c));
+            setShowCelebs(false);
+          }}
+        />
+      )}
     </form>
   );
 }

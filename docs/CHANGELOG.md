@@ -173,6 +173,35 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Sample charts — celebrity picker
+
+- **"⭐ Other celebrities" button** beside the existing example chips opens a
+  modal of **50 public figures** (20 South India, 20 North India, 10 US) with
+  search across name/place/field and region filters. Picking one fills the birth
+  form exactly like the existing Gandhi/Kalam examples, ready to cast.
+- **Time zones are resolved from an IANA zone for the birth date**, not stored as
+  fixed offsets — so historical rules apply automatically: Martin Scorsese's
+  Nov-1942 New York birth correctly resolves to **UTC−4 (WWII war time)**, not
+  EST, and Meryl Streep's June-1949 New Jersey birth to −4 (DST).
+- **Birth times are not publicly documented** for these figures, so every entry
+  uses 12:00 noon with `timeKnown: false`, and the modal says so plainly: signs,
+  nakshatras and dashas are accurate, the Ascendant and houses are indicative.
+  Inventing times would have been the alternative.
+- **Data fix:** the source table gave Martin Scorsese longitude `-942`, outside
+  the valid −180..180 range; corrected to New York's −74.0060. A test now guards
+  the bounds for every entry.
+- **Bug found in browser testing:** the picker renders inside the birth `<form>`,
+  and its buttons had no `type`, so they defaulted to `type="submit"` — every
+  region-filter click submitted the form, casting a chart from stale values and
+  unmounting the modal. Fixed, with a regression test asserting every button is
+  `type="button"` plus one that renders the picker inside a form and checks no
+  submit fires.
+- **24 new tests** (16 dataset + 8 component), including one that casts a chart
+  for **all 50** entries and validates every planet.
+- Files: `src/data/celebrities.ts` (+ `.test.ts`),
+  `src/components/CelebrityPicker.tsx` (+ `.test.tsx`),
+  `src/components/BirthForm.tsx`, `src/styles.css`.
+
 ## Custom-domain runbook
 
 - Added **[custom-domain.md](custom-domain.md)** — a reusable checklist for

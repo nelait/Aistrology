@@ -2361,3 +2361,48 @@ body {
   .chat-window { width: calc(100vw - 24px); height: calc(100vh - 100px); }
   .chat-widget { right: 12px; bottom: 12px; }
 }
+
+/* ── Celebrity sample-chart picker ────────────────────────────────────── */
+.chip-more { border-style: dashed; color: var(--gold); }
+.chip-more:hover { border-color: var(--gold); }
+.celeb-modal { width: 660px; display: flex; flex-direction: column; max-height: calc(100vh - 120px); }
+.celeb-intro { margin: 0 0 14px; line-height: 1.55; }
+.celeb-controls { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.celeb-search {
+  width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--ink);
+  border-radius: 10px; padding: 10px 12px; font-size: 14px;
+}
+.celeb-search:focus { outline: none; border-color: var(--accent); }
+.celeb-regions { display: flex; gap: 4px; flex-wrap: wrap; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 3px; }
+.celeb-regions button {
+  flex: 1; min-width: 96px; background: transparent; border: none; color: var(--muted);
+  cursor: pointer; font-size: 12.5px; font-weight: 600; padding: 7px 10px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap;
+}
+.celeb-regions button.on { background: var(--accent-2); color: #fff; }
+.celeb-count { font-size: 10.5px; opacity: 0.85; }
+.celeb-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.celeb-item {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  text-align: left; cursor: pointer; background: var(--panel); border: 1px solid var(--border);
+  color: var(--ink); border-radius: 10px; padding: 10px 13px; transition: border-color 0.15s, transform 0.1s;
+}
+.celeb-item:hover { border-color: var(--gold); transform: translateY(-1px); }
+.celeb-item-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.celeb-item-main strong { font-size: 14px; }
+.celeb-item-main .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.celeb-item-meta { flex: none; }
+.celeb-field {
+  font-size: 10.5px; font-weight: 700; white-space: nowrap; color: var(--saffron-soft);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 999px; padding: 3px 9px;
+}
+.celeb-empty, .celeb-foot { margin: 10px 0 0; }
+.celeb-foot { padding-top: 10px; border-top: 1px solid var(--border); }
+@media (max-width: 560px) {
+  .celeb-item-meta { display: none; }
+  /* Four pills won't fit on one narrow row — let them wrap into a grid instead
+     of overlapping, and square off the container so wrapping looks deliberate. */
+  .celeb-regions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; border-radius: 12px; }
+  .celeb-regions button { min-width: 0; font-size: 11.5px; padding: 8px 6px; border-radius: 8px; }
+  .celeb-modal { max-height: calc(100vh - 60px); }
+}
