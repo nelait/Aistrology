@@ -19,9 +19,9 @@ Guides for the features and operations of the Aistrology app.
   tracks in a slide-out drawer, with progress and live chart links.
 - [Feature Feedback](feedback.md) — the per-module "Was this helpful?" widget
   and the admin view that ranks features by how users rate them.
-- [Rectification & event analysis](rectification-and-event-analysis.md) —
-  research and plan for deriving an unknown birth time from dated life events,
-  and for explaining events from the chart. Not implemented.
+- [Rectification & event analysis](rectification-and-event-analysis.md) — the
+  shipped event-analysis feature (Events → Your life events), and the research
+  and plan for deriving an unknown birth time from dated events.
 - [Consultations](consultations.md) — provider offers, bookings, and approvals.
 - [Reminders](reminders.md) — personal & festival reminders and the scheduler.
 - [Rate Limiting](rate-limiting.md) — per-plan daily quotas and the global limiter.

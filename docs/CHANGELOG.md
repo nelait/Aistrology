@@ -173,6 +173,52 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Life events — what the chart says about what actually happened
+
+Phase A of [rectification & event analysis](rectification-and-event-analysis.md).
+Under **Events → Your life events**: add dated events and see what classical
+Jyotisha reads in each moment — the dashas that were running, the transits, the
+divisional chart the texts send you to, and any natal yoga that was live.
+
+- **The karaka table is a prior, not a model.** Twenty event types mapped to
+  houses, karakas and vargas, each row citing its source, written before any
+  user data was scored and never to be tuned to make a chart come out right.
+  With nine dasha lords over three nested levels, twelve houses, aspects and
+  transits, *some* combination can be narrated as an explanation for any date
+  whatsoever — that discipline is the only thing standing between this feature
+  and astrology-flavoured noise.
+- **Only the strongest link per lord counts.** A lord that both owns and
+  occupies the 7th does not score twice; the texts do not say it is twice as
+  likely, and stacking is how a scorer starts explaining everything.
+- **Every event is scored against 200 random dates in the same life**, and the
+  percentile — not the raw score — is what the UI shows. It is self-calibrating:
+  near 50 means the chart says nothing in particular about that date, and the
+  feature says so in as many words. Costs ~2 ms, so it shipped now rather than
+  in Phase B as planned.
+- **The null arm immediately caught two defects**, neither visible from the
+  output: the yoga layer ran only for the real event and not for null samples,
+  inflating every percentile by ~4 points (53.9 → 49.4 against the 50.0 a
+  meaningless scorer must produce); and ties counted as "beaten", now on the
+  mid-rank convention.
+- **The regression test is exact, not statistical.** The statistical form could
+  only see a 4-point shift against a 1.6 standard error — too close to call
+  without flaking. `scoreEventDate()` is exported to assert the invariant that
+  scoring must not depend on whether anyone is listening; it is also the hot
+  path rectification will call per candidate birth time.
+- **Dissent is shown, not hidden.** Each reading lists what the chart does *not*
+  support. A system that only ever agrees with the user is the failure mode.
+- **Labelled "traditional method, unvalidated"** in the UI, per the decision in
+  Part 5 of the research — there is no licence-clean source of real birth times
+  to validate against, and recovering one would prove the search works, not the
+  astrology.
+- Analysis is entirely client-side; the server stores events and nothing more,
+  so there is no quota. The whole Events tab is a 23.5 kB lazy chunk.
+- 16 new tests, 374 pass.
+- Files: `src/astro/eventKaraka.ts`, `src/astro/eventAnalysis.ts` (+ `.test.ts`),
+  `server/lifeEvents.ts`, `server/db.ts`, `server/index.ts`, `src/api/client.ts`,
+  `src/components/LifeEventsView.tsx`, `src/components/EventsTab.tsx`,
+  `src/App.tsx`, `src/styles.css`.
+
 ## Mobile responsiveness — Phases 3 & 4
 
 **Phase 3 — touch and breakpoints.**
@@ -685,7 +731,7 @@ See `.env.example` for the full list.
 `global_settings`, `temples`, `temple_services`, `temple_events`,
 `reminders`, `festivals`, `festival_subscriptions`, `promo_codes`,
 `promo_redemptions`, `contact_messages`, `billing_events`,
-`chat_conversations`, `chat_messages`, `notes`, `feedback`. New `users` columns
+`chat_conversations`, `chat_messages`, `notes`, `feedback`, `life_events`. New `users` columns
 include `role`, `suspended`, `plan_expires_at`, `plan_source` (now also takes
 `'disputed'`), and (from earlier work) `email_verified`, `total_charts_created`.
 All added idempotently in `initDb()`.

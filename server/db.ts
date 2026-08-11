@@ -369,6 +369,26 @@ export async function initDb(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_notes_user_chart ON notes(user_id, chart_id, updated_at DESC);
 
+    -- Dated life events the user reports, per profile. Read back by the event
+    -- analysis engine (src/astro/eventAnalysis.ts) and, later, by birth-time
+    -- rectification. The precision column records how well the user remembers
+    -- the date, which widens the scoring window rather than pretending to a
+    -- certainty nobody has.
+    CREATE TABLE IF NOT EXISTS life_events (
+      id          UUID PRIMARY KEY,
+      user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      chart_id    UUID NOT NULL REFERENCES charts(id) ON DELETE CASCADE,
+      type        TEXT NOT NULL,
+      event_date  TEXT NOT NULL,          -- ISO yyyy-mm-dd, no time component
+      precision   TEXT NOT NULL DEFAULT 'exact',  -- exact | month | year | approx
+      confidence  TEXT NOT NULL DEFAULT 'sure',   -- sure | fairly | vague
+      note        TEXT NOT NULL DEFAULT '',
+      created_at  BIGINT NOT NULL,
+      updated_at  BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_life_events_user_chart
+      ON life_events(user_id, chart_id, event_date ASC);
+
     -- Per-feature user feedback ("was this helpful?"), surfaced in the admin
     -- console. Append-only: repeat submissions are separate rows so the comment
     -- history is preserved. user_id survives account deletion as NULL so the
@@ -1608,6 +1628,65 @@ export async function listBillingEvents(limit = 100): Promise<(BillingEventRow &
     [limit],
   );
   return rows;
+}
+
+// ── Life events (per profile) ────────────────────────────────────────────
+
+export interface LifeEventRow {
+  id: string; user_id: string; chart_id: string;
+  type: string; event_date: string; precision: string; confidence: string;
+  note: string; created_at: string; updated_at: string;
+}
+
+export interface LifeEventFields {
+  type: string; eventDate: string; precision: string; confidence: string; note: string;
+}
+
+/** Events for one profile the user owns, oldest first. */
+export async function listLifeEvents(userId: string, chartId: string): Promise<LifeEventRow[]> {
+  const { rows } = await pool.query<LifeEventRow>(
+    "SELECT * FROM life_events WHERE user_id = $1 AND chart_id = $2 ORDER BY event_date ASC",
+    [userId, chartId],
+  );
+  return rows;
+}
+
+export async function createLifeEvent(
+  userId: string, chartId: string, f: LifeEventFields,
+): Promise<LifeEventRow> {
+  const now = Date.now();
+  const { rows } = await pool.query<LifeEventRow>(
+    `INSERT INTO life_events (id, user_id, chart_id, type, event_date, precision, confidence, note, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING *`,
+    [randomUUID(), userId, chartId, f.type, f.eventDate, f.precision, f.confidence, f.note, now],
+  );
+  return rows[0];
+}
+
+/** Update an event the user owns. Returns the row, or null if not found/owned. */
+export async function updateLifeEvent(
+  userId: string, id: string, f: LifeEventFields,
+): Promise<LifeEventRow | null> {
+  const { rows } = await pool.query<LifeEventRow>(
+    `UPDATE life_events SET type=$1, event_date=$2, precision=$3, confidence=$4, note=$5, updated_at=$6
+       WHERE id=$7 AND user_id=$8 RETURNING *`,
+    [f.type, f.eventDate, f.precision, f.confidence, f.note, Date.now(), id, userId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function deleteLifeEvent(userId: string, id: string): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    "DELETE FROM life_events WHERE id = $1 AND user_id = $2", [id, userId]);
+  return (rowCount ?? 0) > 0;
+}
+
+export async function countLifeEvents(userId: string, chartId: string): Promise<number> {
+  const { rows } = await pool.query<{ n: string }>(
+    "SELECT COUNT(*)::text AS n FROM life_events WHERE user_id = $1 AND chart_id = $2",
+    [userId, chartId],
+  );
+  return Number(rows[0]?.n ?? 0);
 }
 
 // ── Feature feedback ─────────────────────────────────────────────────────

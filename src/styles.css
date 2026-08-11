@@ -2653,6 +2653,70 @@ body {
   .feature-feedback { margin-left: 0; margin-right: 0; }
 }
 
+/* ── Your life events (event analysis) ─────────────────────────────────── */
+.le-caveat {
+  border: 1px solid var(--border); border-left: 3px solid var(--gold);
+  background: var(--panel); border-radius: 10px;
+  padding: 12px 14px; margin: 14px 0 18px; font-size: 13px; line-height: 1.6;
+  color: var(--muted);
+}
+.le-caveat strong { color: var(--gold); }
+
+.le-form { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 18px; }
+.le-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.le-form-grid label { display: flex; flex-direction: column; gap: 5px; }
+.le-form-grid select, .le-form-grid input {
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--ink);
+  border-radius: 8px; padding: 8px 10px; font-size: 14px; color-scheme: dark;
+}
+.le-hint { margin: 10px 0 0; }
+.le-form-foot { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.le-note {
+  flex: 1; min-width: 200px; background: var(--bg-2); border: 1px solid var(--border);
+  color: var(--ink); border-radius: 8px; padding: 9px 11px; font-size: 14px;
+}
+
+.le-list { display: flex; flex-direction: column; gap: 10px; }
+.le-item { border: 1px solid var(--border); border-left-width: 3px; border-radius: 10px; background: var(--panel); overflow: hidden; }
+.le-item.band-strong { border-left-color: var(--green); }
+.le-item.band-moderate { border-left-color: var(--gold); }
+.le-item.band-weak { border-left-color: var(--muted); }
+.le-item.band-unsupported { border-left-color: var(--red); }
+
+.le-head {
+  width: 100%; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: none; border: none; color: var(--ink); cursor: pointer;
+  padding: 12px 14px; text-align: left; font: inherit;
+}
+.le-head:hover { background: var(--panel-2); }
+.le-when { flex: 0 0 auto; font-size: 13px; color: var(--muted); min-width: 104px; }
+.le-what { flex: 1; min-width: 120px; font-weight: 700; font-size: 14.5px; }
+.le-band { flex: 0 0 auto; font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.le-band.band-strong { color: var(--green); border-color: var(--green); }
+.le-band.band-moderate { color: var(--gold); border-color: var(--gold); }
+.le-band.band-weak { color: var(--muted); }
+.le-band.band-unsupported { color: var(--red); border-color: var(--red); }
+.le-pct { flex: 0 0 auto; }
+.le-caret { flex: 0 0 auto; }
+
+.le-body { padding: 4px 16px 14px; border-top: 1px solid var(--border); }
+.le-period { margin: 12px 0; font-size: 13.5px; }
+.le-reasons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.le-reasons li { display: flex; gap: 10px; font-size: 13.5px; line-height: 1.55; align-items: flex-start; }
+.le-layer { flex: none; color: var(--accent); width: 16px; text-align: center; }
+.le-src { display: inline; }
+.le-dissent { margin-top: 14px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px; }
+.le-dissent strong { color: var(--saffron-soft); display: block; margin-bottom: 6px; }
+.le-dissent ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.55; color: var(--muted); }
+.le-varga { margin: 12px 0 0; }
+.le-item-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+
+@media (max-width: 640px) {
+  .le-head { gap: 8px; }
+  .le-when { min-width: 0; flex-basis: 100%; }
+  .le-form-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Touch targets. 44px is Apple's HIG minimum (Material asks 48); the audit
    found controls at 31–37px — the Export and Reminders buttons, the settings
    selects, the feedback thumbs.
@@ -2675,6 +2739,7 @@ body {
   .celeb-regions button, .mode-toggle button, .contact-filter,
   .ask-ai-btn, .muhurta-form select, .muhurta-form input,
   .vastu-field select, .vastu-field input, .note-title-input,
+  .le-form-grid select, .le-form-grid input, .le-note, .le-head,
   .btn-plan-upgrade, .btn-plan-current, .admin-nav button, .admin-form input,
   .admin-form select, .admin-form textarea, .limit-input {
     min-height: 44px;

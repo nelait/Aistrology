@@ -12,7 +12,6 @@ import PlanetTable from "./components/PlanetTable";
 import Predictions from "./components/Predictions";
 import DashaView from "./components/DashaView";
 import TransitView from "./components/TransitView";
-import EventsView from "./components/EventsView";
 import ForecastView from "./components/ForecastView";
 import RemediesView from "./components/RemediesView";
 import DoshasView from "./components/DoshasView";
@@ -40,6 +39,7 @@ const AdminView = lazy(() => import("./components/AdminView"));
 // to render a kundli, which is what the overwhelming majority of visits do.
 // One <Suspense> wraps the tab area rather than one per view, so switching tab
 // shows a single line of text at worst.
+const EventsTab = lazy(() => import("./components/EventsTab"));
 const MatchView = lazy(() => import("./components/MatchView"));
 const FriendshipView = lazy(() => import("./components/FriendshipView"));
 const PartnershipView = lazy(() => import("./components/PartnershipView"));
@@ -86,7 +86,7 @@ const TABS: { id: Tab; label: string; sub: string }[] = [
   { id: "chart", label: "Kundli", sub: "Chart & planets" },
   { id: "predictions", label: "Predictions", sub: "Grahas, bhavas, yogas" },
   { id: "dasha", label: "Dasha", sub: "Timing of events" },
-  { id: "events", label: "Events", sub: "Life milestones" },
+  { id: "events", label: "Events", sub: "Milestones & your own" },
   { id: "transit", label: "Transit", sub: "Gochara & Sade Sati" },
   { id: "forecast", label: "Forecast", sub: "Daily & weekly" },
   { id: "doshas", label: "Doshas", sub: "Chart afflictions" },
@@ -838,7 +838,7 @@ export default function App() {
               />
             )}
             {tab === "dasha" && <DashaView chart={chart} />}
-            {tab === "events" && <EventsView chart={chart} />}
+            {tab === "events" && <EventsTab chart={chart} chartId={activeChartId} />}
             {tab === "transit" && <TransitView chart={chart} />}
             {tab === "forecast" && <ForecastView chart={chart} />}
             {tab === "doshas" && <DoshasView chart={chart} />}

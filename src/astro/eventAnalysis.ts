@@ -403,7 +403,10 @@ function scoreDate(
         reasons.push({
           layer: "yoga",
           points: MAX_YOGA,
-          text: `${y.name} involves ${y.planets.join(" and ")}, and one of them was running — the yoga was live in this period.`,
+          text:
+            y.planets.length === 1
+              ? `${y.name} rests on ${y.planets[0]}, which was running — the yoga was live in this period.`
+              : `${y.name} involves ${y.planets.join(" and ")}, and one of them was running — the yoga was live in this period.`,
           source: "Brihat Parashara Hora Shastra",
         });
       }

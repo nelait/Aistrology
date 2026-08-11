@@ -1,6 +1,7 @@
 # Birth-Time Rectification & Event Analysis — Research and Plan
 
-Status: **research only. Nothing implemented.**
+Status: **Phase A shipped** (event capture + deterministic event analysis, with
+the null arm). Phases B–F not started. Rectification itself is not built.
 
 Two features were asked for:
 
@@ -126,7 +127,46 @@ This makes three things mandatory, not optional:
 
 ---
 
-## Part 3 — Feature 2: Event analysis
+## Part 3 — Feature 2: Event analysis — **shipped**
+
+Lives under **Events → Your life events**. What was built, and where it differs
+from the plan below:
+
+| File | Role |
+| ---- | ---- |
+| [`src/astro/eventKaraka.ts`](../src/astro/eventKaraka.ts) | The prior: 20 event types → houses, karakas, varga, each row citing its source |
+| [`src/astro/eventAnalysis.ts`](../src/astro/eventAnalysis.ts) | The scorer, the null arm, and `scoreEventDate()` — the hot path rectification will call |
+| [`server/lifeEvents.ts`](../server/lifeEvents.ts) | Storage only. No quota: nothing on this path costs anything to run |
+| [`src/components/LifeEventsView.tsx`](../src/components/LifeEventsView.tsx) | The UI, and the "traditional method, unvalidated" notice |
+
+**The null arm shipped in Phase A rather than Phase B.** The plan had it later,
+but it costs ~2 ms per event and it is the difference between a number that
+means something and one that does not — so there was no reason to show users an
+uncalibrated score first. Each event reports a percentile against 200 random
+dates in the same life; near 50 means the chart says nothing in particular
+about that date, and the UI says so in as many words.
+
+**It immediately earned its place by catching two defects:**
+
+1. The yoga layer ran only when reasons were being collected, so the real event
+   could earn 6 points the null pool could never match. Every percentile was
+   inflated by about four points — measured 53.9 before, 49.4 after, against
+   the 50.0 a meaningless scorer must produce.
+2. Ties counted as "beaten". Scoring is coarse and long stretches of a life
+   score identically, so ties are common; now on the mid-rank convention.
+
+Neither would have been visible from the output. Both are the exact failure
+mode Part 2 warns about, and nothing except a null arm finds them.
+
+The regression test for the first is **exact, not statistical** — the
+statistical form could only see a 4-point shift against a 1.6 standard error,
+too close to call without flaking. `scoreEventDate()` is exported for it and
+asserts the invariant that scoring must not depend on whether anyone is
+listening.
+
+### Original design
+
+## Part 3 (design) — Feature 2: Event analysis
 
 ### Input model
 
@@ -358,8 +398,8 @@ the error and not the events, and is a Phase F item.
 
 | Phase | Scope | Why here |
 | ----- | ----- | -------- |
-| **A** | Event capture (taxonomy, date precision, per-profile storage) + Feature 2 deterministic explanation, no LLM | Ships user value alone; produces the scorer Feature 1 needs |
-| **B** | Null test + ablation harness | Before anyone trusts a number. Cheap. Do not skip. |
+| **A** ✅ | Event capture (taxonomy, date precision, per-profile storage) + Feature 2 deterministic explanation, no LLM, **plus the null arm** | Ships user value alone; produces the scorer Feature 1 needs |
+| **B** | Ablation harness — score with dasha only, then + transits, then + varga, and drop any layer that does not earn its place | The null arm came forward into A; this is what is left |
 | **C** | Fix the dasha anchor; add Ashtakavarga and D60 | Accuracy prerequisites for fine resolution |
 | **D** | Rectification scan, heatmap, confidence UI, retrodiction loop | The headline feature, on a scorer that has been tested |
 | **E** | LLM narration over the deterministic reasons | Reuses the *Justify* pattern and its quota |

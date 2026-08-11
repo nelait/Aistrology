@@ -156,6 +156,16 @@ export interface AdminContactMessage {
   message: string; status: string; fromAccount: boolean; createdAt: number;
 }
 
+// --- Life events (per profile) ---
+export interface ApiLifeEvent {
+  id: string; chartId: string; type: string; eventDate: string;
+  precision: string; confidence: string; note: string;
+  createdAt: number; updatedAt: number;
+}
+export interface LifeEventPayload {
+  type: string; eventDate: string; precision: string; confidence: string; note?: string;
+}
+
 // --- Feature feedback ---
 export interface AdminFeedback {
   id: string; feature: string; rating: "up" | "down"; comment: string;
@@ -752,6 +762,29 @@ export const api = {
     });
     return (await unwrap<{ message: AdminContactMessage }>(r)).message;
   },
+  // --- Life events ---
+  async listLifeEvents(chartId: string): Promise<ApiLifeEvent[]> {
+    return (await unwrap<{ events: ApiLifeEvent[] }>(
+      await fetch(`/api/life-events?chartId=${encodeURIComponent(chartId)}`))).events;
+  },
+  async createLifeEvent(chartId: string, input: LifeEventPayload): Promise<ApiLifeEvent> {
+    const r = await fetch("/api/life-events", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chartId, ...input }),
+    });
+    return (await unwrap<{ event: ApiLifeEvent }>(r)).event;
+  },
+  async updateLifeEvent(id: string, input: LifeEventPayload): Promise<ApiLifeEvent> {
+    const r = await fetch(`/api/life-events/${id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    return (await unwrap<{ event: ApiLifeEvent }>(r)).event;
+  },
+  async deleteLifeEvent(id: string): Promise<void> {
+    await unwrap<{ ok: boolean }>(await fetch(`/api/life-events/${id}`, { method: "DELETE" }));
+  },
+
   // --- Feature feedback ---
   async sendFeedback(input: { feature: string; rating: "up" | "down"; comment?: string }): Promise<void> {
     await unwrap<{ ok: boolean }>(await fetch("/api/feedback", {

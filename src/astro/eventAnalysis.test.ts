@@ -5,6 +5,8 @@ import { EVENT_KARAKAS, EVENT_KARAKA_BY_ID, PRECISION_WINDOW_DAYS } from "./even
 import { VARGAS } from "./varga";
 import { GRAHAS } from "./constants";
 import { BirthData } from "./types";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const BIRTH: BirthData = {
   name: "Test",
@@ -55,6 +57,25 @@ describe("event karaka prior", () => {
       const overlap = k.primaryHouses.filter((h) => k.secondaryHouses.includes(h));
       expect(overlap, `${k.id} double-counts house ${overlap[0]}`).toEqual([]);
     }
+  });
+
+  it("stays in step with the server's whitelist", () => {
+    // server/lifeEvents.ts validates the type against its own literal set — it
+    // cannot import this module, since the API build does not compile the astro
+    // engine. Read the source and compare, so adding an event type here without
+    // widening the whitelist fails here rather than as a 400 in production.
+    const src = readFileSync(
+      fileURLToPath(new URL("../../server/lifeEvents.ts", import.meta.url)),
+      "utf8",
+    );
+    const block = src.match(/const TYPES = new Set\(\[([\s\S]*?)\]\)/);
+    expect(block, "TYPES whitelist not found in server/lifeEvents.ts").toBeTruthy();
+    const serverTypes = new Set([...block![1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]));
+    const engineTypes = new Set(EVENT_KARAKAS.map((k) => k.id as string));
+    const missing = [...engineTypes].filter((t) => !serverTypes.has(t));
+    const extra = [...serverTypes].filter((t) => !engineTypes.has(t));
+    expect(missing, `the server would reject: ${missing.join(", ")}`).toEqual([]);
+    expect(extra, `the server accepts unknown types: ${extra.join(", ")}`).toEqual([]);
   });
 
   it("widens the scoring window as the user's certainty drops", () => {
