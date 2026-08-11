@@ -16,7 +16,8 @@
     "eval:chat": "tsx scripts/eval-chat.ts",
     "start": "tsx server/index.ts",
     "deploy:check": "tsx scripts/deploy-check.ts",
-    "scheduler:run": "tsx scripts/run-scheduled.ts"
+    "scheduler:run": "tsx scripts/run-scheduled.ts",
+    "ablation": "tsx scripts/ablation.ts"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

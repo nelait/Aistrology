@@ -173,6 +173,51 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Ablation study — which scoring layers actually earn their place
+
+Phase B of [rectification & event analysis](rectification-and-event-analysis.md).
+`npm run ablation`. There is no ground truth to measure accuracy against, so it
+measures four things that need none: fire rate, how often removing a layer
+changes the percentile a user sees, correlation between layers, and whether a
+layer carries **birth-time information** at all.
+
+- **Rectification should use `dasha` + `boundary` only.** Dropping transit,
+  varga and yoga leaves birth-time recovery unchanged at a 1-minute median,
+  while each of them *alone* lands at or worse than the 360-minute chance level,
+  on a curve so flat the winning plateau runs to 84–340 minutes. A
+  `LayerSwitches` option was added to the scorer so Phase D can turn them off
+  cleanly instead of the harness reaching inside it.
+- **The boundary layer is the sharpest instrument, not the dasha layer** —
+  boundary alone recovers to a 1-minute median, dasha alone to 14. It follows
+  from the drift table (boundaries slide 1.35–4.5 days per minute of birth time)
+  but it was not the expected ordering, and it means a rectification flow should
+  prefer events that happen *at a moment* over ones describing a state.
+- **All five layers stay for event analysis.** varga and yoga change nothing
+  about the percentile 63% and 51% of the time, which is weak — but when they
+  fire they produce the lines a reader actually finds useful. Poor evidence
+  about birth time, decent evidence about meaning; different jobs. Nothing was
+  re-weighted: tuning weights without ground truth is the post-hoc fitting the
+  research warns against.
+- **A scaling law that bounds what may be promised.** With noise added to the
+  event dates — because a real user reports when something happened, not when
+  this model would have liked it to: ±7d dates → 2m, ±20d → 7m, ±45d → 16m,
+  ±90d → 31m. Roughly **birth-time error ≈ date error ÷ 3**. And more events do
+  not compensate for worse dates: at ±20d noise, going from 2 events to 8 moved
+  the median from 5m to 7m. Ask for accurate dates, not more of them.
+- The identifiability study is **circular by construction** — events generated
+  by the model, recovered by the model. It measures whether a layer carries
+  birth-time information, not whether the astrology is true. Nothing in this
+  repository can test the latter.
+- The harness also had to be fixed mid-study: taking the first `argmax` handed
+  flat layers minute 0 every time, which read as a systematic error rather than
+  the "this layer knows nothing" it actually was. It now takes the midpoint of
+  the winning plateau and reports the plateau width, which for rectification is
+  the window a user should be shown.
+- 3 new tests. The CI slice asserts medians over five subjects, not single
+  charts — the first attempt asserted on one chart and failed on variance alone.
+- Files: `scripts/ablation.ts`, `src/astro/identifiability.test.ts`,
+  `src/astro/eventAnalysis.ts`, `package.json`.
+
 ## Life events — what the chart says about what actually happened
 
 Phase A of [rectification & event analysis](rectification-and-event-analysis.md).

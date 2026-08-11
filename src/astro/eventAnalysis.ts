@@ -189,7 +189,20 @@ const MAX_TRANSIT = 22;
 const MAX_VARGA = 10;
 const MAX_YOGA = 6;
 
+/**
+ * Which scoring layers are live. Every layer defaults on; this exists so the
+ * ablation harness (scripts/ablation.ts) can remove one cleanly and measure
+ * what it was contributing, rather than the harness reaching inside the scorer.
+ */
+export type LayerSwitches = Partial<Record<ReasonLayer, boolean>>;
+
+const ALL_LAYERS: Required<LayerSwitches> = {
+  dasha: true, boundary: true, transit: true, varga: true, yoga: true,
+};
+
 export interface AnalyseOptions {
+  /** Turn scoring layers off. Omit for all of them. */
+  layers?: LayerSwitches;
   /**
    * How many random dates to score for the null comparison. 0 disables it.
    * ~200 costs a few milliseconds and is what makes `percentile` meaningful.
@@ -239,6 +252,7 @@ function scoreDate(
   when: Date,
   windowDays: number,
   collectReasons: boolean,
+  on: Required<LayerSwitches> = ALL_LAYERS,
 ): RawScore {
   const reasons: EventReason[] = [];
   const dissent: string[] = [];
@@ -257,6 +271,7 @@ function scoreDate(
 
   let dashaHits = 0;
   for (const lvl of levels) {
+    if (!on.dasha) break;
     if (!lvl.lord) continue;
     const v = lordRelevance(chart, lvl.lord, k);
     if (v.relevance <= 0) continue;
@@ -272,7 +287,7 @@ function scoreDate(
       });
     }
   }
-  if (collectReasons && dashaHits === 0) {
+  if (on.dasha && collectReasons && dashaHits === 0) {
     dissent.push(
       `No dasha lord running on this date (${levels.filter((l) => l.lord).map((l) => l.lord).join(", ")}) ` +
         `connects to the ${k.primaryHouses.map(ordinalHouse).join(" or ")} or to ` +
@@ -284,7 +299,7 @@ function scoreDate(
   // Only for events the texts treat as happening AT a moment. A long illness
   // has no reason to coincide with a period change, and rewarding it for one
   // would be manufacturing agreement.
-  if (k.timing !== "state") {
+  if (on.boundary && k.timing !== "state") {
     const boundaries: Array<{ at: Date; label: string }> = [];
     if (maha) boundaries.push({ at: maha.start, label: `${maha.lord} Mahadasha` });
     if (antar) boundaries.push({ at: antar.start, label: `${antar.lord} Antardasha` });
@@ -312,13 +327,13 @@ function scoreDate(
   }
 
   // ── Layer 3: transits ───────────────────────────────────────────────────
-  const transits = computeTransits(chart, when);
-  const jup = transits.find((t) => t.planet === "Jupiter")!;
-  const sat = transits.find((t) => t.planet === "Saturn")!;
-  const ss = sadeSati(transits);
+  const transits = on.transit ? computeTransits(chart, when) : [];
+  const jup = on.transit ? transits.find((t) => t.planet === "Jupiter")! : null; transits.find((t) => t.planet === "Jupiter")!;
+  const sat = on.transit ? transits.find((t) => t.planet === "Saturn")! : null;
+  const ss = on.transit ? sadeSati(transits) : { active: false, phase: undefined, saturnHouseFromMoon: 0 };
   let transitPts = 0;
 
-  if (k.primaryHouses.includes(jup.houseFromLagna)) {
+  if (jup && k.primaryHouses.includes(jup.houseFromLagna)) {
     const pts = k.polarity === "malefic" ? 3 : 9;
     transitPts += pts;
     if (collectReasons) {
@@ -330,7 +345,7 @@ function scoreDate(
       });
     }
   }
-  if (k.primaryHouses.includes(sat.houseFromLagna)) {
+  if (sat && k.primaryHouses.includes(sat.houseFromLagna)) {
     const pts = k.polarity === "malefic" ? 9 : 3;
     transitPts += pts;
     if (collectReasons) {
@@ -363,7 +378,7 @@ function scoreDate(
   // ── Layer 4: varga ──────────────────────────────────────────────────────
   // The lord of the relevant divisional lagna, and whether the running dasha
   // lords touch it.
-  if (k.varga !== "D1") {
+  if (on.varga && k.varga !== "D1") {
     const vLagnaSign = divisionalSign(chart.ascendant, k.varga);
     const vLord = RASHIS[vLagnaSign].lord as PlanetName;
     const running = [maha?.lord, antar?.lord].filter(Boolean) as PlanetName[];
@@ -389,7 +404,7 @@ function scoreDate(
   // collected. It did not, at first — the real event could pick up 6 points the
   // null pool could never earn, which pushed every percentile up by about six.
   // The null test caught it; nothing else would have.
-  {
+  if (on.yoga) {
     const running = [maha?.lord, antar?.lord].filter(Boolean) as PlanetName[];
     const wantChallenging = k.polarity === "malefic";
     for (const y of yogas) {
@@ -453,9 +468,10 @@ export function analyseEvent(
   const k = EVENT_KARAKA_BY_ID[event.type];
   const dashas = options.dashas ?? dashaTreeFor(chart);
   const yogas = options.yogas ?? detectYogas(chart);
+  const on: Required<LayerSwitches> = { ...ALL_LAYERS, ...(options.layers ?? {}) };
   const windowDays = PRECISION_WINDOW_DAYS[event.precision];
 
-  const real = scoreDate(chart, dashas, yogas, k, event.date, windowDays, true);
+  const real = scoreDate(chart, dashas, yogas, k, event.date, windowDays, true, on);
 
   // ── Null arm ────────────────────────────────────────────────────────────
   const n = options.nullSamples ?? 200;
@@ -472,7 +488,7 @@ export function analyseEvent(
       let ties = 0;
       for (let i = 0; i < n; i++) {
         const at = new Date(birth + rnd() * span);
-        const s = scoreDate(chart, dashas, yogas, k, at, windowDays, false).total;
+        const s = scoreDate(chart, dashas, yogas, k, at, windowDays, false, on).total;
         if (s < real.total) below++;
         else if (s === real.total) ties++;
       }
@@ -516,13 +532,14 @@ export function analyseEvent(
 export function scoreEventDate(
   chart: Chart,
   event: LifeEventInput,
-  options: Pick<AnalyseOptions, "dashas" | "yogas"> = {},
+  options: Pick<AnalyseOptions, "dashas" | "yogas" | "layers"> = {},
 ): number {
   const k = EVENT_KARAKA_BY_ID[event.type];
   const dashas = options.dashas ?? dashaTreeFor(chart);
   const yogas = options.yogas ?? detectYogas(chart);
+  const on: Required<LayerSwitches> = { ...ALL_LAYERS, ...(options.layers ?? {}) };
   return round1(
-    scoreDate(chart, dashas, yogas, k, event.date, PRECISION_WINDOW_DAYS[event.precision], false)
+    scoreDate(chart, dashas, yogas, k, event.date, PRECISION_WINDOW_DAYS[event.precision], false, on)
       .total,
   );
 }
