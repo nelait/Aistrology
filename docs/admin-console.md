@@ -41,7 +41,7 @@ ADMIN_ACCESS_CODE=$(openssl rand -base64 12)
    **Enter admin console**.
 5. You're in — the console's left rail lists every section: **Overview**,
    **Usage & Limits**, **Users**, **Approvals**, **Temples**, **Reminders**,
-   **Promo Codes**, **Contact**, **Billing**, **Notifications**, **AI / LLM**,
+   **Promo Codes**, **Contact**, **Feedback**, **Billing**, **Notifications**, **AI / LLM**,
    and **Features**.
 
 ## Leaving the console
@@ -60,6 +60,7 @@ ADMIN_ACCESS_CODE=$(openssl rand -base64 12)
 | **Users**         | List all users; create users (with plan + role); change plan/role; suspend/reactivate.         |
 | **Approvals**     | Approve or reject consultation provider offers (new offers arrive as `pending`).               |
 | **Contact**       | Read messages sent through the Contact-us form; mark them read / resolved.                      |
+| **Feedback**      | Per-feature 👍/👎 ratings and comments, ranked worst-first; triage new → read → actioned. See [Feature Feedback](feedback.md). |
 | **Billing**       | Read-only audit trail of refunds & disputes from Stripe (see [Refunds & disputes](promos-and-payments.md#refunds--disputes)). The app never issues refunds; disputes auto-revoke the user's plan. |
 | **Notifications** | Broadcast to all users or target specific ones (info / success / warning).                      |
 | **AI / LLM**      | Configure the global provider key **and pick the _Active engine_** (Off / Demo / a provider). All AI features — Justify, Translate, Vastu and **Astro Chat** — run on this config, and their UI is hidden while the engine is `Off`. See [Astro Chat § Enabling](astro-chat.md#enabling--operating). |

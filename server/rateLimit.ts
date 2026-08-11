@@ -102,9 +102,9 @@ export type PlanLimits = Record<string, Record<string, number>>;
 /** Code defaults — the fallback and the "Reset to defaults" target. Admins can
  * override these in the DB (see server/quotas.ts + Admin → Plan Limits). */
 export const DEFAULT_PLAN_DAILY_LIMITS: PlanLimits = {
-  free:    { justify: 5,  translate: 3,  justify_stream: 5,  chart_create: 3, booking: 2, vastu: 1,  chat: 5 },
-  pro:     { justify: 30, translate: 20, justify_stream: 30, chart_create: 10, booking: 5, vastu: 5,  chat: 50 },
-  premium: { justify: 100, translate: 60, justify_stream: 100, chart_create: 30, booking: 10, vastu: 15, chat: 200 },
+  free:    { justify: 5,  translate: 3,  justify_stream: 5,  chart_create: 3, booking: 2, vastu: 1,  chat: 5,  feedback: 20 },
+  pro:     { justify: 30, translate: 20, justify_stream: 30, chart_create: 10, booking: 5, vastu: 5,  chat: 50, feedback: 40 },
+  premium: { justify: 100, translate: 60, justify_stream: 100, chart_create: 30, booking: 10, vastu: 15, chat: 200, feedback: 60 },
 };
 
 /** Plans and features exposed in the admin editor (order = display order). */
@@ -117,6 +117,7 @@ export const QUOTA_FEATURES: { key: string; label: string }[] = [
   { key: "vastu", label: "Vastu analysis" },
   { key: "chart_create", label: "New charts / profiles" },
   { key: "booking", label: "Consultation bookings" },
+  { key: "feedback", label: "Feature feedback" },
 ];
 
 // The live limits used by every quota check. Starts at the code defaults and is

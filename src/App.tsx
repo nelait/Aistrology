@@ -4,6 +4,7 @@ import { api } from "./api/client";
 import BirthForm from "./components/BirthForm";
 import ChatPanel from "./components/ChatPanel";
 import NotesView from "./components/NotesView";
+import { FeatureFeedback } from "./components/FeatureFeedback";
 import ProfileSwitcher from "./components/ProfileSwitcher";
 import LessonsDrawer from "./components/LessonsDrawer";
 import NorthChart, { SignLegend } from "./components/NorthChart";
@@ -823,6 +824,11 @@ export default function App() {
             {tab === "pooja" && features.temples && <PoojaServicesView />}
             {tab === "notes" && <NotesView chart={chart} chartId={activeChartId} />}
             {tab === "learn" && <LearnView />}
+
+            {/* One widget covers every module — the active tab is the feature key.
+                Signed-in only: the endpoint requires auth, so a guest would just
+                hit a 401 after taking the trouble to write a comment. */}
+            {user && <FeatureFeedback feature={tab} label={TABS.find((t) => t.id === tab)?.label} />}
           </main>
         </>
       )}

@@ -173,6 +173,38 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Feature feedback (per-module 👍/👎)
+
+- **"Was this helpful?" strip at the foot of every feature tab** — thumb up/down
+  plus an optional comment, prompted differently per rating ("What worked well?"
+  vs "What was missing or wrong?"). Nothing is sent until the user presses Send,
+  so a stray tap costs nothing.
+- **One mount covers every module.** Rather than editing ~20 view components,
+  a single `<FeatureFeedback feature={tab} …/>` sits just before `</main>` in
+  `src/App.tsx` and uses the active tab id as the feature key — so any tab added
+  later is covered automatically.
+- **Resets on tab switch** so feedback always describes what is on screen, and is
+  **hidden for guests** (the endpoint requires auth — a signed-out visitor would
+  otherwise write a comment and hit a 401).
+- **Admin → Feedback**: per-feature summary bars **sorted worst-first** (lowest
+  positive share at the top, since that's where the product work is), with raw
+  counts, clickable to filter; then the entry list with feature/rating/status
+  filters and a `new → read → actioned` triage. Nothing is deleted.
+- **Quota'd** like every other feature (`feedback`: free 20 / pro 40 / premium 60
+  per day, admin-editable in Plan Limits) so the admin view can't be flooded.
+  A `429` is shown to the user rather than a false thank-you.
+- **Two bugs caught in verification against the live API:** `feedbackSummary()`
+  never selected `total`, so every summary bar would have rendered `0%` and
+  "undefined ratings"; and `setFeedbackStatus()` returned `RETURNING *` without
+  the users join, so marking an entry read/actioned dropped the submitter's email
+  from the row the UI swapped in. Both fixed.
+- **17 new tests** (8 widget + 9 admin section).
+- Files: `server/feedback.ts`, `server/db.ts`, `server/admin.ts`,
+  `server/rateLimit.ts`, `server/index.ts`,
+  `src/components/FeatureFeedback.tsx` (+ `.test.tsx`),
+  `src/components/AdminView.tsx`, `src/components/FeedbackSection.test.tsx`,
+  `src/api/client.ts`, `src/App.tsx`, `src/styles.css`, `docs/feedback.md`.
+
 ## Sample charts — celebrity picker
 
 - **"⭐ Other celebrities" button** beside the existing example chips opens a
@@ -513,7 +545,7 @@ See `.env.example` for the full list.
 `global_settings`, `temples`, `temple_services`, `temple_events`,
 `reminders`, `festivals`, `festival_subscriptions`, `promo_codes`,
 `promo_redemptions`, `contact_messages`, `billing_events`,
-`chat_conversations`, `chat_messages`, `notes`. New `users` columns
+`chat_conversations`, `chat_messages`, `notes`, `feedback`. New `users` columns
 include `role`, `suspended`, `plan_expires_at`, `plan_source` (now also takes
 `'disputed'`), and (from earlier work) `email_verified`, `total_charts_created`.
 All added idempotently in `initDb()`.

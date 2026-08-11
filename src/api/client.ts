@@ -156,6 +156,15 @@ export interface AdminContactMessage {
   message: string; status: string; fromAccount: boolean; createdAt: number;
 }
 
+// --- Feature feedback ---
+export interface AdminFeedback {
+  id: string; feature: string; rating: "up" | "down"; comment: string;
+  status: string; email: string | null; createdAt: number;
+}
+export interface FeedbackSummaryRow {
+  feature: string; total: number; up: number; down: number; comments: number;
+}
+
 export type PlanLimits = Record<string, Record<string, number>>;
 export interface AdminQuotas {
   limits: PlanLimits;
@@ -743,6 +752,23 @@ export const api = {
     });
     return (await unwrap<{ message: AdminContactMessage }>(r)).message;
   },
+  // --- Feature feedback ---
+  async sendFeedback(input: { feature: string; rating: "up" | "down"; comment?: string }): Promise<void> {
+    await unwrap<{ ok: boolean }>(await fetch("/api/feedback", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    }));
+  },
+  async getAdminFeedback(): Promise<{ entries: AdminFeedback[]; summary: FeedbackSummaryRow[] }> {
+    return unwrap<{ entries: AdminFeedback[]; summary: FeedbackSummaryRow[] }>(
+      await fetch("/api/admin/feedback"));
+  },
+  async setFeedbackStatus(id: string, status: string): Promise<AdminFeedback> {
+    const r = await fetch(`/api/admin/feedback/${id}/status`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }),
+    });
+    return (await unwrap<{ entry: AdminFeedback }>(r)).entry;
+  },
+
   async getAdminBillingEvents(): Promise<AdminBillingEvent[]> {
     return (await unwrap<{ events: AdminBillingEvent[] }>(await fetch("/api/admin/billing-events"))).events;
   },

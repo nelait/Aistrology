@@ -17,6 +17,8 @@ import {
   AdminPromoCode,
   AdminContactMessage,
   AdminBillingEvent,
+  AdminFeedback,
+  FeedbackSummaryRow,
   AdminQuotas,
   PlanLimits,
   CONTACT_CATEGORIES,
@@ -85,7 +87,7 @@ function AdminGate({ defaultEmail, onExit }: { defaultEmail: string; onExit: () 
 
 /* -------------------- Dashboard shell -------------------- */
 
-type Section = "overview" | "usage" | "limits" | "users" | "approvals" | "temples" | "reminders" | "promos" | "contact" | "billing" | "notify" | "llm" | "features";
+type Section = "overview" | "usage" | "limits" | "users" | "approvals" | "temples" | "reminders" | "promos" | "contact" | "feedback" | "billing" | "notify" | "llm" | "features";
 const SECTIONS: [Section, string][] = [
   ["overview", "Overview"],
   ["usage", "Usage & Limits"],
@@ -96,6 +98,7 @@ const SECTIONS: [Section, string][] = [
   ["reminders", "Reminders"],
   ["promos", "Promo Codes"],
   ["contact", "Contact"],
+  ["feedback", "Feedback"],
   ["billing", "Billing"],
   ["notify", "Notifications"],
   ["llm", "AI / LLM"],
@@ -130,6 +133,7 @@ function AdminDashboard({ onExit }: { onExit: () => void }) {
         {section === "reminders" && <RemindersAdminSection />}
         {section === "promos" && <PromosSection />}
         {section === "contact" && <ContactAdminSection />}
+        {section === "feedback" && <FeedbackSection />}
         {section === "billing" && <BillingEventsSection />}
         {section === "notify" && <NotifySection />}
         {section === "llm" && <LlmSection />}
@@ -1312,6 +1316,154 @@ function ContactAdminSection() {
                 <div className="request-btns">
                   {m.status !== "read" && <button className="mini-btn" disabled={busyId === m.id} onClick={() => setStatus(m.id, "read")}>Mark read</button>}
                   {m.status !== "resolved" && <button className="mini-btn ok" disabled={busyId === m.id} onClick={() => setStatus(m.id, "resolved")}>Resolve</button>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -------------------- Feature feedback -------------------- */
+
+// Mirrors the tab labels in App.tsx (TABS). Kept as a plain map rather than an
+// import so the admin bundle doesn't pull in App and create a cycle.
+const FEATURE_LABEL: Record<string, string> = {
+  chart: "Kundli", predictions: "Predictions", dasha: "Dasha", events: "Events",
+  transit: "Transit", forecast: "Forecast", doshas: "Doshas", muhurta: "Muhurta",
+  remedies: "Remedies", match: "Marriage Match", friends: "Friendship Match",
+  partners: "Partnership Match", career: "Career", health: "Health",
+  mental: "Mental Health", vastu: "Vastu", pooja: "Pooja Services",
+  notes: "Notes", billing: "Plans & Billing", learn: "Learn",
+};
+const featureLabel = (k: string) => FEATURE_LABEL[k] ?? k;
+
+export function FeedbackSection() {
+  const [entries, setEntries] = useState<AdminFeedback[]>([]);
+  const [summary, setSummary] = useState<FeedbackSummaryRow[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [featureFilter, setFeatureFilter] = useState("all");
+  const [ratingFilter, setRatingFilter] = useState("all");
+
+  useEffect(() => {
+    api.getAdminFeedback()
+      .then((d) => { setEntries(d.entries); setSummary(d.summary); })
+      .catch((e) => setErr(e instanceof Error ? e.message : "Failed"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const setStatus = async (id: string, status: string) => {
+    setBusyId(id);
+    try {
+      const updated = await api.setFeedbackStatus(id, status);
+      setEntries((es) => es.map((e) => (e.id === id ? updated : e)));
+    } catch (e) { setErr(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusyId(null); }
+  };
+
+  if (loading) return <p className="muted small">Loading feedback…</p>;
+  if (err) return <p className="error">{err}</p>;
+
+  const shown = entries.filter((e) =>
+    (statusFilter === "all" || e.status === statusFilter) &&
+    (featureFilter === "all" || e.feature === featureFilter) &&
+    (ratingFilter === "all" || e.rating === ratingFilter));
+  const newCount = entries.filter((e) => e.status === "new").length;
+
+  // Worst-rated first — that's where the product work is.
+  const ranked = [...summary].sort((a, b) => {
+    const sa = a.total ? a.up / a.total : 1;
+    const sb = b.total ? b.up / b.total : 1;
+    return sa - sb || b.total - a.total;
+  });
+
+  return (
+    <div className="admin-section">
+      <p className="muted small">
+        In-app “Was this helpful?” ratings, per feature. {entries.length} total · {newCount} unreviewed.
+      </p>
+
+      {ranked.length === 0 ? (
+        <p className="muted small">No feedback submitted yet.</p>
+      ) : (
+        <div className="fb-summary">
+          {ranked.map((r) => {
+            const pct = r.total ? Math.round((r.up / r.total) * 100) : 0;
+            return (
+              <div key={r.feature} className="fb-sum-row">
+                <button
+                  type="button"
+                  className="fb-sum-name"
+                  onClick={() => setFeatureFilter(featureFilter === r.feature ? "all" : r.feature)}
+                  title="Filter the list by this feature"
+                >
+                  {featureLabel(r.feature)}
+                </button>
+                <div className="fb-bar" role="img" aria-label={`${pct}% positive`}>
+                  <span className="fb-bar-up" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="fb-sum-num">{pct}%</span>
+                <span className="muted small fb-sum-counts">
+                  👍 {r.up} · 👎 {r.down} · {r.total} rating{r.total === 1 ? "" : "s"}
+                  {r.comments > 0 && ` · ${r.comments} comment${r.comments === 1 ? "" : "s"}`}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="contact-admin-head">
+        <div className="fb-filters">
+          <select value={featureFilter} onChange={(e) => setFeatureFilter(e.target.value)} className="contact-filter">
+            <option value="all">All features</option>
+            {summary.map((r) => (
+              <option key={r.feature} value={r.feature}>{featureLabel(r.feature)}</option>
+            ))}
+          </select>
+          <select value={ratingFilter} onChange={(e) => setRatingFilter(e.target.value)} className="contact-filter">
+            <option value="all">👍 & 👎</option>
+            <option value="up">👍 Positive</option>
+            <option value="down">👎 Negative</option>
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="contact-filter">
+            <option value="all">Any status</option>
+            <option value="new">New</option>
+            <option value="read">Read</option>
+            <option value="actioned">Actioned</option>
+          </select>
+        </div>
+      </div>
+
+      {shown.length === 0 ? (
+        <p className="muted small">No feedback matches these filters.</p>
+      ) : (
+        <div className="contact-list">
+          {shown.map((f) => (
+            <div key={f.id} className={`contact-msg status-${f.status}`}>
+              <div className="contact-msg-head">
+                <div>
+                  <span className={`fb-rating ${f.rating}`}>{f.rating === "up" ? "👍" : "👎"}</span>{" "}
+                  <strong>{featureLabel(f.feature)}</strong>
+                  {f.email && <a className="link small" href={`mailto:${f.email}`}> · {f.email}</a>}
+                </div>
+                <div className="contact-msg-meta">
+                  <span className={`consult-status s-${f.status === "new" ? "requested" : f.status === "actioned" ? "completed" : "confirmed"}`}>{f.status}</span>
+                </div>
+              </div>
+              {f.comment
+                ? <p className="contact-msg-body">{f.comment}</p>
+                : <p className="contact-msg-body muted">(rating only — no comment)</p>}
+              <div className="contact-msg-foot">
+                <span className="muted small">{new Date(f.createdAt).toLocaleString()}</span>
+                <div className="request-btns">
+                  {f.status !== "read" && <button className="mini-btn" disabled={busyId === f.id} onClick={() => setStatus(f.id, "read")}>Mark read</button>}
+                  {f.status !== "actioned" && <button className="mini-btn ok" disabled={busyId === f.id} onClick={() => setStatus(f.id, "actioned")}>Actioned</button>}
                 </div>
               </div>
             </div>

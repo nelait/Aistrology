@@ -17,6 +17,8 @@ Guides for the features and operations of the Aistrology app.
 - [Notes](notes.md) — private per-profile notes for Pro/Premium users.
 - [Lessons](lessons.md) — the built-in astrology course: Beginner/Advanced/Pro
   tracks in a slide-out drawer, with progress and live chart links.
+- [Feature Feedback](feedback.md) — the per-module "Was this helpful?" widget
+  and the admin view that ranks features by how users rate them.
 - [Consultations](consultations.md) — provider offers, bookings, and approvals.
 - [Reminders](reminders.md) — personal & festival reminders and the scheduler.
 - [Rate Limiting](rate-limiting.md) — per-plan daily quotas and the global limiter.

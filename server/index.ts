@@ -19,6 +19,7 @@ import { promoRouter } from "./promo";
 import { contactRouter } from "./contact";
 import { chatRouter } from "./chat";
 import { notesRouter } from "./notes";
+import { feedbackRouter } from "./feedback";
 
 const app = express();
 
@@ -66,6 +67,7 @@ app.use("/api/promo", promoRouter);
 app.use("/api/contact", contactRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api/notes", notesRouter);
+app.use("/api/feedback", feedbackRouter);
 
 // ── Static SPA (production) ────────────────────────────────────────────────
 // In dev, Vite serves the app on :5173 and proxies /api + /auth here. In

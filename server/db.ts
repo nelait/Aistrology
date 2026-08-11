@@ -368,6 +368,22 @@ export async function initDb(): Promise<void> {
       updated_at  BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_notes_user_chart ON notes(user_id, chart_id, updated_at DESC);
+
+    -- Per-feature user feedback ("was this helpful?"), surfaced in the admin
+    -- console. Append-only: repeat submissions are separate rows so the comment
+    -- history is preserved. user_id survives account deletion as NULL so the
+    -- aggregate counts stay honest.
+    CREATE TABLE IF NOT EXISTS feedback (
+      id          UUID PRIMARY KEY,
+      user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
+      feature     TEXT NOT NULL,
+      rating      TEXT NOT NULL,              -- up | down
+      comment     TEXT NOT NULL DEFAULT '',
+      status      TEXT NOT NULL DEFAULT 'new', -- new | read | actioned
+      created_at  BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_feedback_feature ON feedback(feature);
   `);
 }
 
@@ -1592,6 +1608,84 @@ export async function listBillingEvents(limit = 100): Promise<(BillingEventRow &
     [limit],
   );
   return rows;
+}
+
+// ── Feature feedback ─────────────────────────────────────────────────────
+
+export interface FeedbackRow {
+  id: string; user_id: string | null; feature: string;
+  rating: string; comment: string; status: string; created_at: string;
+}
+
+export async function createFeedback(d: {
+  userId: string | null; feature: string; rating: string; comment: string;
+}): Promise<FeedbackRow> {
+  const { rows } = await pool.query<FeedbackRow>(
+    `INSERT INTO feedback (id, user_id, feature, rating, comment, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [randomUUID(), d.userId, d.feature, d.rating, d.comment, Date.now()],
+  );
+  return rows[0];
+}
+
+/** Feedback entries (admin), newest first, with the submitter's email if any. */
+export async function listFeedback(limit = 300): Promise<(FeedbackRow & { account_email: string | null })[]> {
+  const { rows } = await pool.query<FeedbackRow & { account_email: string | null }>(
+    `SELECT f.*, u.email AS account_email
+       FROM feedback f LEFT JOIN users u ON u.id = f.user_id
+      ORDER BY f.created_at DESC LIMIT $1`,
+    [limit],
+  );
+  return rows;
+}
+
+/** Per-feature tallies so the admin console can rank what needs attention. */
+export interface FeedbackSummaryRow {
+  feature: string;
+  total: number;
+  up: number;
+  down: number;
+  comments: number;
+}
+
+export async function feedbackSummary(): Promise<FeedbackSummaryRow[]> {
+  const { rows } = await pool.query<Record<keyof FeedbackSummaryRow, string>>(
+    `SELECT feature,
+            COUNT(*)::text                               AS total,
+            COUNT(*) FILTER (WHERE rating = 'up')::text   AS up,
+            COUNT(*) FILTER (WHERE rating = 'down')::text AS down,
+            COUNT(*) FILTER (WHERE comment <> '')::text   AS comments
+       FROM feedback
+      GROUP BY feature
+      ORDER BY COUNT(*) DESC`,
+  );
+  return rows.map((r) => ({
+    feature: r.feature,
+    total: Number(r.total),
+    up: Number(r.up),
+    down: Number(r.down),
+    comments: Number(r.comments),
+  }));
+}
+
+/** Returns the updated row with the submitter's email, so the admin list can
+ *  swap it in place without losing the column it renders. */
+export async function setFeedbackStatus(
+  id: string,
+  status: string,
+): Promise<(FeedbackRow & { account_email: string | null }) | null> {
+  const { rows } = await pool.query<FeedbackRow & { account_email: string | null }>(
+    `UPDATE feedback f SET status=$1 WHERE f.id=$2
+     RETURNING f.*, (SELECT email FROM users u WHERE u.id = f.user_id) AS account_email`,
+    [status, id],
+  );
+  return rows[0] ?? null;
+}
+
+export async function countNewFeedback(): Promise<number> {
+  const { rows } = await pool.query<{ n: string }>(
+    "SELECT COUNT(*)::text AS n FROM feedback WHERE status='new'");
+  return Number(rows[0]?.n ?? 0);
 }
 
 // ── Astro Chat conversations (Phase 2) ───────────────────────────────────

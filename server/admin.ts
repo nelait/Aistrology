@@ -42,6 +42,10 @@ import {
   type ContactMessageRow,
   listBillingEvents,
   type BillingEventRow,
+  listFeedback,
+  feedbackSummary,
+  setFeedbackStatus,
+  type FeedbackRow,
 } from "./db";
 import { runReminderCheck, runPlanExpiryCheck } from "./reminderScheduler";
 import {
@@ -549,4 +553,34 @@ function apiBillingEvent(b: BillingEventRow & { account_email?: string | null })
 
 adminRouter.get("/billing-events", async (_req, res) => {
   res.json({ events: (await listBillingEvents()).map(apiBillingEvent) });
+});
+
+// ── Feature feedback ─────────────────────────────────────────────────────
+
+function apiFeedback(f: FeedbackRow & { account_email?: string | null }) {
+  return {
+    id: f.id,
+    feature: f.feature,
+    rating: f.rating,
+    comment: f.comment,
+    status: f.status,
+    email: f.account_email ?? null,
+    createdAt: Number(f.created_at),
+  };
+}
+
+adminRouter.get("/feedback", async (_req, res) => {
+  const [entries, summary] = await Promise.all([listFeedback(), feedbackSummary()]);
+  res.json({ entries: entries.map(apiFeedback), summary });
+});
+
+adminRouter.post("/feedback/:id/status", async (req, res) => {
+  const { status } = (req.body ?? {}) as { status?: string };
+  if (!status || !["new", "read", "actioned"].includes(status)) {
+    res.status(400).json({ error: "Invalid status" });
+    return;
+  }
+  const f = await setFeedbackStatus(req.params.id, status);
+  if (!f) { res.status(404).json({ error: "Feedback not found" }); return; }
+  res.json({ entry: apiFeedback(f) });
 });

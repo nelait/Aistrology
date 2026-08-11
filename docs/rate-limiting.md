@@ -49,9 +49,21 @@ paid-gated (free users get a small daily allowance as an upgrade hook):
 A `429` returns the remaining quota; the chat panel turns a free-user `429` into
 an upgrade prompt. See [Astro Chat](astro-chat.md).
 
+## Feature Feedback
+
+The per-module "Was this helpful?" widget writes to a quota too, so a bored user
+or a script can't flood the admin view:
+
+| Endpoint | Free | Pro | Premium |
+| -------- | ---- | --- | ------- |
+| Feedback (`POST /api/feedback`) | 20 / day | 40 / day | 60 / day |
+
+Exceeding it returns `429` and the widget shows the message instead of
+pretending the feedback was recorded. See [Feature Feedback](feedback.md).
+
 ### Editing the limits (Admin)
 
-All the per-plan daily numbers above (and the booking / new-chart quotas) are
+All the per-plan daily numbers above (and the booking / new-chart / feedback quotas) are
 **editable in the admin console** — no code deploy needed. **Admin console →
 Plan Limits** shows a plan × feature grid; edits are saved to the DB and take
 effect **immediately** (the live table is updated in memory on save, so running
