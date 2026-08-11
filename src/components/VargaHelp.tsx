@@ -1,4 +1,4 @@
-import { VARGAS, Varga } from "../astro/varga";
+import { DISPLAYED_VARGAS, Varga } from "../astro/varga";
 
 interface Props {
   current: Varga;
@@ -20,7 +20,7 @@ export default function VargaHelp({ current, onPick }: Props) {
       </p>
 
       <div className="varga-help-list">
-        {VARGAS.map((v) => (
+        {DISPLAYED_VARGAS.map((v) => (
           <button
             key={v.code}
             className={`varga-help-item ${v.code === current ? "current" : ""}`}

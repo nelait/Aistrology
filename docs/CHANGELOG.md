@@ -173,6 +173,51 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Ashtakavarga, the finer vargas, and a timezone bug in the dasha timeline
+
+Phase C of [rectification & event analysis](rectification-and-event-analysis.md)
+— the engine work the ablation study called for.
+
+- **Ashtakavarga** (`src/astro/ashtakavarga.ts`): Bhinnashtakavarga for the seven
+  grahas and the Sarvashtakavarga over them. The bindu tables carry their own
+  proof — each graha's benefic places sum to a total every classical text quotes
+  (Sun 48, Moon 49, Mars 39, Mercury 54, Jupiter 56, Venus 52, Saturn 39), and
+  those sum to 337. A single mistranscribed number breaks one of them, so the
+  tests assert all eight across sixty charts.
+- **Wired in where classical practice actually uses it**: a transit is now
+  scaled by the bindus the transiting graha's own varga gives the sign it
+  occupies. Five or more and it gives its better results there; three or fewer
+  and it struggles however well placed it looks. On the test chart a Saturn
+  transit with 2 bindus dropped a reading from the 76th percentile to the 64th
+  — the layer says "nothing changed" less often (inert 22.7% → 17.3%).
+- **Five new vargas**: D4, D16, D24, D30 and D60. D30 is the one that is not an
+  equal division — five unequal stretches ruled by the non-luminaries, reversed
+  from an even sign — and a test sweeps the whole zodiac to confirm it never
+  lands on Cancer or Leo, which own no trimsamsa. D60 changes every 30 arc
+  minutes, which is why it is the classical rectification chart; a test counts
+  the 59 changes across a sign.
+- **The four karaka rows that had been substituting a coarser chart now read the
+  one the texts name.** That is what moved the varga layer from inert 63% of the
+  time to 45%, with mean |Δpercentile| up from 2.8 to 4.2.
+- The new vargas are computed but not offered in the chart toggle — twelve
+  buttons is a lot of chrome, and browsing D60 with an approximate birth time
+  would suggest a precision nobody has. `VargaInfo.displayed` gates it; the
+  metadata is there to surface them whenever that is wanted.
+- **A real bug in the dasha timeline**: `assessCurrentPeriod` built the birth
+  `Date` from local components without `tzOffsetHours`, so the timeline was
+  anchored to *the viewer's* timezone. Measured at 12.5 hours off for a
+  Hyderabad birth read from Los Angeles — and the error changed with whoever was
+  looking. Immaterial for a nineteen-year Mahadasha, not immaterial for the
+  pratyantardashas this work depends on. It now uses `birthDateUT`, and the date
+  formatting reads UT too; verified identical from four viewer timezones.
+- The identifiability conclusions did not move — rectification should still use
+  `dasha` + `boundary` only.
+- 14 new tests, 391 pass.
+- Files: `src/astro/ashtakavarga.ts` (+ `.test.ts`), `src/astro/varga.ts`
+  (+ `.test.ts`), `src/astro/vargaInterpret.ts`, `src/astro/eventAnalysis.ts`,
+  `src/astro/eventKaraka.ts`, `src/astro/periodHealth.ts`, `src/App.tsx`,
+  `src/components/ExportReport.tsx`, `src/components/VargaHelp.tsx`.
+
 ## Ablation study — which scoring layers actually earn their place
 
 Phase B of [rectification & event analysis](rectification-and-event-analysis.md).

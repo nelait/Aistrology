@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { divisionalSign, VARGAS, VARGA_BY_CODE, Varga } from "./varga";
+import { divisionalSign, VARGAS, DISPLAYED_VARGAS, VARGA_BY_CODE, Varga } from "./varga";
 import { norm360 } from "./math";
 
 describe("divisionalSign — classical placements", () => {
@@ -81,6 +81,82 @@ describe("varga metadata", () => {
     for (const v of VARGAS) {
       expect(VARGA_BY_CODE[v.code]).toBe(v);
       expect(v.division).toBe(Number(v.code.slice(1)));
+    }
+  });
+});
+
+describe("the finer vargas (D4, D16, D24, D30, D60)", () => {
+  it("D4 puts the four quarters on the kendras from the sign", () => {
+    // Aries 0-7°30' -> Aries, then Cancer, Libra, Capricorn.
+    expect(divisionalSign(0, "D4")).toBe(0);
+    expect(divisionalSign(8, "D4")).toBe(3);
+    expect(divisionalSign(16, "D4")).toBe(6);
+    expect(divisionalSign(23, "D4")).toBe(9);
+  });
+
+  it("D16 starts movable from Aries, fixed from Leo, dual from Sagittarius", () => {
+    expect(divisionalSign(0, "D16")).toBe(0);        // Aries, movable
+    expect(divisionalSign(120, "D16")).toBe(4);      // Leo, fixed
+    expect(divisionalSign(60, "D16")).toBe(8);       // Gemini, dual
+  });
+
+  it("D24 starts odd signs from Leo and even signs from Cancer", () => {
+    expect(divisionalSign(0, "D24")).toBe(4);        // Aries (odd) -> Leo
+    expect(divisionalSign(30, "D24")).toBe(3);       // Taurus (even) -> Cancer
+    expect(divisionalSign(1.3, "D24")).toBe(5);      // second part of Aries
+  });
+
+  it("D30 divides unequally and never lands on a luminary's sign", () => {
+    // Odd sign order: Mars, Saturn, Jupiter, Mercury, Venus.
+    expect(divisionalSign(2, "D30")).toBe(0);        // Aries 0-5 -> Mars/Aries
+    expect(divisionalSign(7, "D30")).toBe(10);       // 5-10 -> Saturn/Aquarius
+    expect(divisionalSign(14, "D30")).toBe(8);       // 10-18 -> Jupiter/Sagittarius
+    expect(divisionalSign(20, "D30")).toBe(2);       // 18-25 -> Mercury/Gemini
+    expect(divisionalSign(28, "D30")).toBe(6);       // 25-30 -> Venus/Libra
+    // Even sign reverses the order.
+    expect(divisionalSign(30 + 2, "D30")).toBe(1);   // Taurus 0-5 -> Venus/Taurus
+    expect(divisionalSign(30 + 28, "D30")).toBe(7);  // 25-30 -> Mars/Scorpio
+
+    // Cancer and Leo are owned by the Moon and Sun, which hold no trimsamsa.
+    for (let lon = 0; lon < 360; lon += 0.25) {
+      const d30 = divisionalSign(lon, "D30");
+      expect(d30 === 3 || d30 === 4, `D30 gave a luminary sign at ${lon}°`).toBe(false);
+    }
+  });
+
+  it("D60 changes every 30 arc-minutes — which is why it rectifies", () => {
+    expect(divisionalSign(0, "D60")).toBe(0);
+    expect(divisionalSign(0.49, "D60")).toBe(0);
+    expect(divisionalSign(0.51, "D60")).toBe(1);
+    expect(divisionalSign(1.01, "D60")).toBe(2);
+    // 24 changes across one sign: 60 parts cycling through 12 signs.
+    let changes = 0;
+    let prev = divisionalSign(0, "D60");
+    for (let d = 0.01; d < 30; d += 0.01) {
+      const cur = divisionalSign(d, "D60");
+      if (cur !== prev) changes++;
+      prev = cur;
+    }
+    expect(changes).toBe(59);
+  });
+
+  it("every varga returns a valid sign for any longitude", () => {
+    for (const v of VARGAS) {
+      for (let lon = 0; lon < 360; lon += 0.37) {
+        const sign = divisionalSign(lon, v.code);
+        expect(Number.isInteger(sign), `${v.code} gave ${sign} at ${lon}°`).toBe(true);
+        expect(sign).toBeGreaterThanOrEqual(0);
+        expect(sign).toBeLessThanOrEqual(11);
+      }
+    }
+  });
+
+  it("only the classic seven are offered in the chart toggle", () => {
+    expect(DISPLAYED_VARGAS.map((v) => v.code)).toEqual(["D1", "D2", "D3", "D7", "D9", "D10", "D12"]);
+    // …but every varga has the metadata needed to be surfaced later.
+    for (const v of VARGAS) {
+      expect(v.label.length, `${v.code} has no label`).toBeGreaterThan(0);
+      expect(v.about.length, `${v.code} has no explanation`).toBeGreaterThan(60);
     }
   });
 });

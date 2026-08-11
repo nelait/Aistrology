@@ -51,6 +51,11 @@ const DOMAIN: Record<Exclude<Varga, "D1" | "D2">, DomainCfg> = {
   D9: { domain: "marriage, the spouse and dharma", houses: [{ n: 7, label: "7th (spouse & marriage)" }], karakas: ["Venus", "Jupiter"] },
   D10: { domain: "career, work and public standing", houses: [{ n: 10, label: "10th (career)" }], karakas: ["Sun", "Saturn", "Mercury"] },
   D12: { domain: "parents and ancestry", houses: [{ n: 4, label: "4th (mother)" }, { n: 9, label: "9th (father)" }], karakas: ["Sun", "Moon"] },
+  D4: { domain: "home, land and fixed property", houses: [{ n: 4, label: "4th (home & land)" }], karakas: ["Mars", "Venus"] },
+  D16: { domain: "vehicles and material comforts", houses: [{ n: 4, label: "4th (conveyances)" }], karakas: ["Venus"] },
+  D24: { domain: "learning, education and skill", houses: [{ n: 4, label: "4th (schooling)" }, { n: 5, label: "5th (intellect)" }], karakas: ["Mercury", "Jupiter"] },
+  D30: { domain: "misfortune, illness and hidden weakness", houses: [{ n: 6, label: "6th (disease)" }, { n: 8, label: "8th (chronic ills)" }], karakas: ["Mars", "Saturn"] },
+  D60: { domain: "the accumulated weight of past karma", houses: [{ n: 1, label: "1st (the self)" }], karakas: ["Saturn"] },
 };
 
 const KARAKA_ROLE: Partial<Record<PlanetName, string>> = {
@@ -63,7 +68,14 @@ const KARAKA_ROLE: Partial<Record<PlanetName, string>> = {
   Mercury: "intellect, skill and commerce",
 };
 
+const BPHS_REF = "Brihat Parashara Hora Shastra";
+
 const REF: Record<Varga, Reference> = {
+  D4: { source: BPHS_REF, text: "The Chaturthāṁśa (D4) is examined for the home, land and fixed property — each sign quartered, the parts falling on the kendras from it." },
+  D16: { source: BPHS_REF, text: "The Ṣoḍaśāṁśa (D16) is read for conveyances and material comforts, and for the happiness they actually bring; Venus is its karaka." },
+  D24: { source: BPHS_REF, text: "The Siddhāṁśa (D24) is the chart of learning and acquired skill, counted from Leo in odd signs and Cancer in even." },
+  D30: { source: BPHS_REF, text: "The Triṁśāṁśa (D30) is read for evils, disease and hidden weakness. It alone is divided unequally, among the five grahas other than the luminaries." },
+  D60: { source: BPHS_REF, text: "Parashara weights the Ṣaṣṭyāṁśa (D60) above the other vargas in judging a graha's real quality, it being the sum of past karma; at 30' a part it is also the traditional means of rectifying an uncertain birth time." },
   D1: { source: "Brihat Parashara Hora Shastra", text: "The Rāśi (D1) is the primary chart; every area of life is first seen here and then refined in the relevant divisional chart." },
   D2: { source: "Brihat Parashara Hora Shastra", text: "The Horā (D2) shows wealth: planets in the Sun's horā (Leo) give it through effort and enterprise; in the Moon's horā (Cancer) through nurturing, others and liquid means." },
   D3: { source: "Brihat Parashara Hora Shastra", text: "The Drekkāṇa (D3) is examined for co-borns, courage and self-effort — chiefly the 3rd house and Mars." },

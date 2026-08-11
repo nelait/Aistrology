@@ -19,7 +19,7 @@ import AccountBar from "./components/AccountBar";
 import NotificationBell from "./components/NotificationBell";
 import VargaHelp from "./components/VargaHelp";
 import VargaReadingPanel from "./components/VargaReadingPanel";
-import { VARGAS, VARGA_BY_CODE, Varga } from "./astro/varga";
+import { DISPLAYED_VARGAS, VARGA_BY_CODE, Varga } from "./astro/varga";
 import { AYANAMSAS, Ayanamsa } from "./astro/ayanamsa";
 import { useLanguage } from "./i18n/LanguageProvider";
 import { LANGUAGES } from "./i18n/languages";
@@ -790,7 +790,7 @@ export default function App() {
                     <button className={style === "south" ? "on" : ""} onClick={() => setStyle("south")}>South Indian</button>
                   </div>
                   <div className="toggle varga-toggle">
-                    {VARGAS.map((v) => (
+                    {DISPLAYED_VARGAS.map((v) => (
                       <button
                         key={v.code}
                         className={mode === v.code ? "on" : ""}

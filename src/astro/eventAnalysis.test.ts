@@ -118,19 +118,27 @@ describe("analyseEvent", () => {
     expect([...pts].sort((x, y) => y - x)).toEqual(pts);
   });
 
-  it("flags the missing varga rather than quietly substituting one", () => {
-    const a = analyseEvent(
-      chart,
-      { type: "illness", date: marriage.date, precision: "month", confidence: "sure" },
-      { nullSamples: 0 },
-    );
-    // D30 is what the texts ask for and the engine does not compute it.
-    expect(EVENT_KARAKA_BY_ID.illness.vargaWanted).toContain("D30");
-    expect(a.vargaNote).toContain("D30");
-  });
+  it("reads the varga the texts actually ask for, with no substitutions left", () => {
+    // Four rows used to fall back to a coarser chart because the engine stopped
+    // at D12; D4, D16, D24 and D30 exist now, so every row should point at its
+    // own chart and no reading should carry a substitution note.
+    const substituting = EVENT_KARAKAS.filter((k) => k.vargaWanted);
+    expect(substituting.map((k) => `${k.id}→${k.vargaWanted}`)).toEqual([]);
 
-  it("has no varga note when the classical chart is actually computed", () => {
-    expect(analyseEvent(chart, marriage, { nullSamples: 0 }).vargaNote).toBeUndefined();
+    const tree = dashaTreeFor(chart);
+    for (const k of EVENT_KARAKAS) {
+      const a = analyseEvent(
+        chart,
+        { type: k.id, date: marriage.date, precision: "month", confidence: "sure" },
+        { dashas: tree, nullSamples: 0 },
+      );
+      expect(a.vargaNote, `${k.id} still substitutes a varga`).toBeUndefined();
+    }
+    // The ones that moved, specifically.
+    expect(EVENT_KARAKA_BY_ID.illness.varga).toBe("D30");
+    expect(EVENT_KARAKA_BY_ID.education.varga).toBe("D24");
+    expect(EVENT_KARAKA_BY_ID.property.varga).toBe("D4");
+    expect(EVENT_KARAKA_BY_ID.vehicle.varga).toBe("D16");
   });
 
   it("scores every event type without throwing", () => {

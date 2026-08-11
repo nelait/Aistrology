@@ -1,8 +1,9 @@
 # Birth-Time Rectification & Event Analysis — Research and Plan
 
-Status: **Phases A and B shipped** (event capture, deterministic event analysis
-with a null arm, and the ablation study). Rectification itself is not built —
-but Phase B measured that it will work, and which layers it should use.
+Status: **Phases A, B and C shipped** (event capture and analysis with a null
+arm; the ablation study; and the engine work it called for). Rectification
+itself is not built — but Phase B measured that it will work, and which layers
+it should use.
 
 Two features were asked for:
 
@@ -315,6 +316,33 @@ whether the astrology is true. Nothing here can test the latter.
    Nothing was re-weighted: tuning weights without ground truth is precisely the
    post-hoc fitting Part 2 warns against.
 
+### What Phase C changed, measured
+
+Re-running the same harness after the engine work, against the Phase B numbers:
+
+| Layer | Never changes rank (before → after) | \|Δpercentile\| |
+| --- | --- | --- |
+| varga | 63.3% → **44.7%** | 2.8 → **4.2** |
+| transit | 22.7% → **17.3%** | 6.2 → 6.3 |
+| dasha | 6.7% → **2.7%** | 23.1 → 24.1 |
+
+The varga layer improved most, and for a plain reason: four karaka rows had been
+falling back to D1 or D9 because the engine stopped at D12, and the varga layer
+skips D1 entirely. Pointing them at the D4, D16, D24 and D30 the texts actually
+name took the layer from inert two-thirds of the time to inert 45%.
+
+Ashtakavarga tightened the transit layer by scaling each transit by the bindus
+the graha's own varga gives the sign it occupies — five or more and it gives its
+better results there, three or fewer and it struggles however well placed it
+looks. Concretely, on the test chart a Saturn transit with 2 bindus dropped one
+reading from the 76th percentile to the 64th. The layer says less often that
+nothing has changed.
+
+The identifiability conclusions did **not** move: rectification should still use
+`dasha` + `boundary` only. `only varga` improved from a 284-minute median to
+219 with a much tighter plateau (84m → 24m), consistent with the new divisions
+being finer — but it remains far worse than the two layers that matter.
+
 ### The scaling law that bounds what may be promised
 
 20 subjects, 5 events, dasha+boundary, with noise added to the event dates —
@@ -476,13 +504,13 @@ the error and not the events, and is a Phase F item.
 
 ## Part 6 — Engine gaps found
 
-| Gap | Impact |
+| Gap | Status |
 | --- | ------ |
-| **Ashtakavarga not implemented** | The standard classical answer to "how strong is this transit/period". Biggest gap for both features. |
-| **Vargas stop at D12** | No D16/D24/D30/D60. **D60 is the classical rectification chart** (~2 min resolution). Four taxonomy rows above want missing vargas. |
-| **Only one dasha system** | Vimshottari alone is a single witness. Serious rectifiers cross-check with a second (Jaimini Chara, Yogini). |
-| **`assessCurrentPeriod` anchors the timeline wrong** | It builds the birth `Date` from local components without `tzOffsetHours`, unlike `birthDateUT`. Measured: a 12.5-hour offset for a Hyderabad birth viewed from `America/Los_Angeles` — and *the error changes with the viewer's timezone*. Immaterial for a 19-year Mahādaśā; **not** immaterial for pratyantardashas, which these features depend on. Fix before building on it. |
-| **No known-birth-time dataset** | See Part 5. |
+| **Ashtakavarga not implemented** | ✅ **Closed in Phase C.** `src/astro/ashtakavarga.ts` — Bhinnashtakavarga for the seven grahas plus Sarvashtakavarga. Wired into the transit layer, which is where classical practice actually uses it. |
+| **Vargas stop at D12** | ✅ **Closed in Phase C.** D4, D16, D24, D30 and D60 added. All four karaka rows that were falling back to a coarser chart now read the one the texts name. |
+| **`assessCurrentPeriod` anchors the timeline wrong** | ✅ **Fixed in Phase C.** It now uses `birthDateUT`, and the date formatting reads UT too. Verified identical output from four viewer timezones. |
+| **Only one dasha system** | Open. Vimshottari alone is a single witness; serious rectifiers cross-check with a second (Jaimini Chara, Yogini). Not needed for Phase D — the ablation showed Vimshottari boundaries alone recover a birth time to a 1-minute median — but it would be a genuine second opinion. |
+| **No known-birth-time dataset** | Open, and unresolvable on current terms. See Part 5. |
 
 ---
 
@@ -492,7 +520,7 @@ the error and not the events, and is a Phase F item.
 | ----- | ----- | -------- |
 | **A** ✅ | Event capture (taxonomy, date precision, per-profile storage) + Feature 2 deterministic explanation, no LLM, **plus the null arm** | Ships user value alone; produces the scorer Feature 1 needs |
 | **B** ✅ | Ablation harness (`npm run ablation`) + identifiability study | Settled which layers Phase D should use, and bounded what it may claim |
-| **C** | Fix the dasha anchor; add Ashtakavarga and D60 | Accuracy prerequisites for fine resolution |
+| **C** ✅ | Fixed the dasha anchor; added Ashtakavarga, D4, D16, D24, D30 and D60 | Accuracy prerequisites for fine resolution |
 | **D** | Rectification scan, heatmap, confidence UI, retrodiction loop | The headline feature, on a scorer that has been tested |
 | **E** | LLM narration over the deterministic reasons | Reuses the *Justify* pattern and its quota |
 | **F** | Opt-in accuracy collection from users who know their birth time | The only licence-clean route to real ground truth |

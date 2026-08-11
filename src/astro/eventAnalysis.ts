@@ -18,6 +18,12 @@ import { aspectedSigns } from "./aspects";
 import { divisionalSign } from "./varga";
 import { detectYogas, Yoga } from "./yogas";
 import {
+  computeAshtakavarga,
+  binduInSign,
+  binduStrength,
+  AshtakavargaResult,
+} from "./ashtakavarga";
+import {
   EVENT_KARAKA_BY_ID,
   EventKaraka,
   EventTypeId,
@@ -212,6 +218,8 @@ export interface AnalyseOptions {
   dashas?: DashaPeriod[];
   /** Precomputed natal yogas — chart-level, so hoisted out of the date loop. */
   yogas?: Yoga[];
+  /** Precomputed ashtakavarga — chart-level, likewise. */
+  ashtakavarga?: AshtakavargaResult;
   /** Deterministic seed for the null sampling, so results are reproducible. */
   seed?: number;
 }
@@ -248,6 +256,7 @@ function scoreDate(
   chart: Chart,
   dashas: DashaPeriod[],
   yogas: Yoga[],
+  av: AshtakavargaResult,
   k: EventKaraka,
   when: Date,
   windowDays: number,
@@ -333,26 +342,42 @@ function scoreDate(
   const ss = on.transit ? sadeSati(transits) : { active: false, phase: undefined, saturnHouseFromMoon: 0 };
   let transitPts = 0;
 
+  // A transit is only worth what the sign supports. Classical practice reads a
+  // graha's own ashtakavarga for exactly this: five points or more and it gives
+  // its better results there, three or fewer and it struggles however well
+  // placed it looks. Scaling by that is what the bare house test was missing.
+  const avScale = (planet: "Jupiter" | "Saturn", sign: number) => {
+    const b = binduInSign(av, planet, sign) ?? 4;
+    const s = binduStrength(b);
+    return { mult: s === "strong" ? 1.35 : s === "average" ? 1 : 0.6, bindus: b, strength: s };
+  };
+
   if (jup && k.primaryHouses.includes(jup.houseFromLagna)) {
-    const pts = k.polarity === "malefic" ? 3 : 9;
+    const a = avScale("Jupiter", jup.signIndex);
+    const pts = (k.polarity === "malefic" ? 3 : 9) * a.mult;
     transitPts += pts;
     if (collectReasons) {
       reasons.push({
         layer: "transit",
-        points: pts,
-        text: `Transiting Jupiter was in the ${ordinalHouse(jup.houseFromLagna)}, supporting it by presence.`,
+        points: round1(pts),
+        text:
+          `Transiting Jupiter was in the ${ordinalHouse(jup.houseFromLagna)}, supporting it by presence — ` +
+          `and ${a.bindus} bindus in its own ashtakavarga make that a ${a.strength} placement.`,
         source: "Phaladeepika",
       });
     }
   }
   if (sat && k.primaryHouses.includes(sat.houseFromLagna)) {
-    const pts = k.polarity === "malefic" ? 9 : 3;
+    const a = avScale("Saturn", sat.signIndex);
+    const pts = (k.polarity === "malefic" ? 9 : 3) * a.mult;
     transitPts += pts;
     if (collectReasons) {
       reasons.push({
         layer: "transit",
-        points: pts,
-        text: `Transiting Saturn was in the ${ordinalHouse(sat.houseFromLagna)}, pressing on the matter.`,
+        points: round1(pts),
+        text:
+          `Transiting Saturn was in the ${ordinalHouse(sat.houseFromLagna)}, pressing on the matter — ` +
+          `with ${a.bindus} bindus in its own ashtakavarga, a ${a.strength} placement.`,
         source: "Phaladeepika",
       });
     }
@@ -468,10 +493,11 @@ export function analyseEvent(
   const k = EVENT_KARAKA_BY_ID[event.type];
   const dashas = options.dashas ?? dashaTreeFor(chart);
   const yogas = options.yogas ?? detectYogas(chart);
+  const av = options.ashtakavarga ?? computeAshtakavarga(chart);
   const on: Required<LayerSwitches> = { ...ALL_LAYERS, ...(options.layers ?? {}) };
   const windowDays = PRECISION_WINDOW_DAYS[event.precision];
 
-  const real = scoreDate(chart, dashas, yogas, k, event.date, windowDays, true, on);
+  const real = scoreDate(chart, dashas, yogas, av, k, event.date, windowDays, true, on);
 
   // ── Null arm ────────────────────────────────────────────────────────────
   const n = options.nullSamples ?? 200;
@@ -488,7 +514,7 @@ export function analyseEvent(
       let ties = 0;
       for (let i = 0; i < n; i++) {
         const at = new Date(birth + rnd() * span);
-        const s = scoreDate(chart, dashas, yogas, k, at, windowDays, false, on).total;
+        const s = scoreDate(chart, dashas, yogas, av, k, at, windowDays, false, on).total;
         if (s < real.total) below++;
         else if (s === real.total) ties++;
       }
@@ -532,14 +558,15 @@ export function analyseEvent(
 export function scoreEventDate(
   chart: Chart,
   event: LifeEventInput,
-  options: Pick<AnalyseOptions, "dashas" | "yogas" | "layers"> = {},
+  options: Pick<AnalyseOptions, "dashas" | "yogas" | "ashtakavarga" | "layers"> = {},
 ): number {
   const k = EVENT_KARAKA_BY_ID[event.type];
   const dashas = options.dashas ?? dashaTreeFor(chart);
   const yogas = options.yogas ?? detectYogas(chart);
+  const av = options.ashtakavarga ?? computeAshtakavarga(chart);
   const on: Required<LayerSwitches> = { ...ALL_LAYERS, ...(options.layers ?? {}) };
   return round1(
-    scoreDate(chart, dashas, yogas, k, event.date, PRECISION_WINDOW_DAYS[event.precision], false, on)
+    scoreDate(chart, dashas, yogas, av, k, event.date, PRECISION_WINDOW_DAYS[event.precision], false, on)
       .total,
   );
 }
@@ -560,7 +587,8 @@ export function analyseEvents(
 ): EventAnalysis[] {
   const dashas = options.dashas ?? dashaTreeFor(chart);
   const yogas = options.yogas ?? detectYogas(chart);
+  const ashtakavarga = options.ashtakavarga ?? computeAshtakavarga(chart);
   return events
-    .map((e) => analyseEvent(chart, e, { ...options, dashas, yogas }))
+    .map((e) => analyseEvent(chart, e, { ...options, dashas, yogas, ashtakavarga }))
     .sort((a, b) => a.date.getTime() - b.date.getTime());
 }

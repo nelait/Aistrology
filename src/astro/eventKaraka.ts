@@ -193,8 +193,7 @@ export const EVENT_KARAKAS: EventKaraka[] = [
     primaryHouses: [4, 5],
     secondaryHouses: [9, 2],
     karakas: ["Mercury", "Jupiter"],
-    varga: "D9",
-    vargaWanted: "D24 (Siddhamsa)",
+    varga: "D24",
     source: BPHS,
     basis:
       "The 4th bhava rules formal schooling, the 5th intelligence and the fruit of study, " +
@@ -210,8 +209,7 @@ export const EVENT_KARAKAS: EventKaraka[] = [
     primaryHouses: [4, 3],
     secondaryHouses: [12, 9],
     karakas: ["Moon", "Mars"],
-    varga: "D1",
-    vargaWanted: "D4 (Chaturthamsa)",
+    varga: "D4",
     source: PHALADEEPIKA,
     basis:
       "The 4th bhava rules home and fixed property, the 3rd short journeys and movement. " +
@@ -241,8 +239,7 @@ export const EVENT_KARAKAS: EventKaraka[] = [
     primaryHouses: [4],
     secondaryHouses: [2, 11, 12],
     karakas: ["Mars", "Venus"],
-    varga: "D1",
-    vargaWanted: "D4 (Chaturthamsa)",
+    varga: "D4",
     source: BPHS,
     basis:
       "The 4th bhava rules immovable property and Mars is the karaka of land. Acquisition " +
@@ -257,8 +254,7 @@ export const EVENT_KARAKAS: EventKaraka[] = [
     primaryHouses: [4],
     secondaryHouses: [2, 11],
     karakas: ["Venus"],
-    varga: "D1",
-    vargaWanted: "D16 (Shodashamsa)",
+    varga: "D16",
     source: PHALADEEPIKA,
     basis:
       "Conveyances are read from the 4th bhava with Venus as karaka; the Shodashamsa (D16) " +
@@ -273,8 +269,7 @@ export const EVENT_KARAKAS: EventKaraka[] = [
     primaryHouses: [6, 8],
     secondaryHouses: [12, 1],
     karakas: ["Saturn", "Mars"],
-    varga: "D1",
-    vargaWanted: "D30 (Trimsamsa)",
+    varga: "D30",
     source: BPHS,
     basis:
       "The 6th bhava rules disease and the 8th chronic and grave conditions; the 1st is the " +
@@ -290,8 +285,7 @@ export const EVENT_KARAKAS: EventKaraka[] = [
     primaryHouses: [6, 8],
     secondaryHouses: [12, 1],
     karakas: ["Mars", "Saturn"],
-    varga: "D1",
-    vargaWanted: "D30 (Trimsamsa)",
+    varga: "D30",
     source: SARAVALI,
     basis:
       "Mars, karaka of cutting instruments and of surgery, acting on the 6th or 8th bhava " +

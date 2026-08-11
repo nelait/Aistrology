@@ -5,6 +5,7 @@
 import { Chart, DashaPeriod } from "./types";
 import { PlanetName, RASHIS, NAKSHATRAS } from "./constants";
 import { computeVimshottari, activePeriod } from "./dasha";
+import { birthDateUT } from "./engine";
 
 export interface PeriodQuality {
   mahadashaLord: PlanetName;
@@ -182,8 +183,10 @@ function scorePlanetMental(planet: PlanetName, chart: Chart): number {
   return Math.max(10, Math.min(100, score));
 }
 
+/** Dasha boundaries are instants in UT — read them in UT, or the same period
+ *  prints a day earlier for readers west of Greenwich. */
 function formatDate(d: Date): string {
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+  return `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`;
 }
 
 function verdict(score: number, domain: string): string {
@@ -195,10 +198,13 @@ function verdict(score: number, domain: string): string {
 
 export function assessCurrentPeriod(chart: Chart): PeriodQuality | null {
   const moon = chart.planets.find((p) => p.planet === "Moon")!;
-  const birthDate = new Date(
-    chart.birth.year, chart.birth.month - 1, chart.birth.day,
-    chart.birth.hour, chart.birth.minute, chart.birth.second ?? 0,
-  );
+  // The dasha timeline has to be anchored to the birth instant in UT. Building
+  // a Date from the local components instead anchored it to the *viewer's*
+  // timezone: a Hyderabad birth read from Los Angeles came out 12.5 hours off,
+  // and the size of the error changed with whoever was looking. Immaterial for
+  // a nineteen-year Mahadasha, not immaterial for the pratyantardashas the
+  // event-analysis and rectification work depends on.
+  const birthDate = birthDateUT(chart.birth);
 
   const dashas = computeVimshottari(moon.longitude, birthDate, 120, 2);
   const now = new Date();

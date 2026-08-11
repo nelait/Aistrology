@@ -16,7 +16,7 @@ import { importantEvents } from "../astro/events";
 import { formatDegInSign, formatDate, formatTz } from "../utils/format";
 import { useTranslation } from "../i18n/TranslationProvider";
 import { useLanguage } from "../i18n/LanguageProvider";
-import { Varga, VARGA_BY_CODE, VARGAS } from "../astro/varga";
+import { Varga, VARGA_BY_CODE, DISPLAYED_VARGAS } from "../astro/varga";
 import { interpretVarga, LIFE_AREA_ORDER, LIFE_AREA_LABEL } from "../astro/vargaInterpret";
 import NorthChart from "./NorthChart";
 import SouthChart from "./SouthChart";
@@ -77,7 +77,7 @@ export default function ExportReport({ chart, open, onClose, style, mode, locked
     const yogas = detectYogas(chart);
     const events = importantEvents(chart, { spanYears: 90 }).filter((e) => e.date <= now).slice(-4);
     const vargaReadings = Object.fromEntries(
-      VARGAS.map((v) => [v.code, interpretVarga(chart, v.code)]),
+      DISPLAYED_VARGAS.map((v) => [v.code, interpretVarga(chart, v.code)]),
     ) as Record<Varga, ReturnType<typeof interpretVarga>>;
 
     const strings = [
@@ -213,7 +213,7 @@ export default function ExportReport({ chart, open, onClose, style, mode, locked
               <section>
                 <h2>Divisional charts (D1–D12) · {style === "south" ? "South" : "North"} Indian</h2>
                 <div className="varga-grid">
-                  {VARGAS.map((v) => (
+                  {DISPLAYED_VARGAS.map((v) => (
                     <div className="report-varga" key={v.code}>
                       <ChartFor v={v.code} />
                       <p className="report-chart-label">{v.label}</p>
@@ -245,7 +245,7 @@ export default function ExportReport({ chart, open, onClose, style, mode, locked
           {allVargas ? (
             <section>
               <h2>What each divisional chart says</h2>
-              {VARGAS.map((v) => {
+              {DISPLAYED_VARGAS.map((v) => {
                 const r = vargaReadings[v.code];
                 return (
                   <div className="report-item" key={v.code}>
