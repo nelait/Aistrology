@@ -28,6 +28,8 @@ Guides for the features and operations of the Aistrology app.
   live deployment, plus troubleshooting for every failure hit in practice.
 - [Changing the domain](custom-domain.md) — checklist for moving to a custom
   domain (DNS, `APP_URL`, OAuth redirect URIs, Stripe webhook secret).
+- [Mobile responsiveness](mobile-responsive.md) — measured audit of the app at
+  phone/tablet widths, and the phased plan to fix what it found.
 - [Deployment](deployment.md) — why Railway, the constraints behind the choice,
   the Render / Cloud Run comparison, and the scale-out plan.
 

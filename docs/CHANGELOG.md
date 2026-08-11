@@ -173,6 +173,46 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Mobile responsiveness — Phase 1
+
+Audit in [`docs/mobile-responsive.md`](mobile-responsive.md); this is the
+CSS-only first phase of its four.
+
+- **Kundli scrolled sideways on phones** (`document.scrollWidth` 757 at a 375px
+  viewport). `.chart-layout` already collapsed to `grid-template-columns: 1fr`
+  at ≤900px — but `1fr` means `minmax(auto, 1fr)`, and `auto` as a *minimum* is
+  **min-content**, which for the planet table (`white-space: nowrap` on every
+  cell) is 737px. The column was forced wider than the screen, so the
+  `.table-wrap { overflow-x: auto }` already wrapping that table never got to
+  scroll. `minmax(0, 1fr)` + `min-width: 0` on the children fixes it; the table
+  now scrolls inside its own wrapper exactly like Transit.
+- **iOS focus-zoom killed on phones.** 21 rules set form controls to 13–15px,
+  and mobile Safari zooms the page on focus below 16px without zooming back —
+  so every tap into the birth form, chat box or filter left the user pinching
+  out. One `@media (max-width: 640px) { input, select, textarea { font-size:
+  16px !important } }` fixes all 21 while leaving desktop density alone. The
+  `!important` is load-bearing: every one of those rules is class-scoped and
+  would outrank a bare element selector.
+- **`calc(100vh …)` → `calc(100dvh …)`** (with the `vh` line kept as a fallback)
+  for the chat window and celebrity modal — on iOS `100vh` is the *large*
+  viewport height, so the chat input row could sit under the URL bar.
+- **`minmax(320px, 1fr)` → `minmax(260px, 1fr)`** on `.doshas-list` and
+  `.muhurta-days`, which overflowed on 320px-wide devices.
+- **CSS-source regression guard** (`src/styles.mobile.test.ts`, 5 assertions).
+  jsdom has no layout engine — `getBoundingClientRect()` returns zeros — so no
+  test in this suite could have caught the Kundli bug, and pretending otherwise
+  would be theatre. The guard instead asserts the two bug *classes* at their
+  source. **It found 12 more bare-`1fr` grids than the browser sweep did**
+  (`.billing-plans`, `.kuta-grid`, `.article-cards`, `.contact-form-grid`, …):
+  the sweep only catches what overflows with *today's* content, while those
+  carry the identical latent bug. All 12 converted.
+- Verified at 375×812: all 19 tabs now report `scrollWidth === 375`, every
+  on-screen form control measures 16px, the Kundli SVG fits at 335px (was 420).
+  Desktop re-checked at 1280px and unchanged — grid still `420px 758px`, table
+  unclipped, selects back at 13px.
+- Files: `src/styles.css`, `src/styles.mobile.test.ts`,
+  `docs/mobile-responsive.md`.
+
 ## Feature feedback (per-module 👍/👎)
 
 - **"Was this helpful?" strip at the foot of every feature tab** — thumb up/down

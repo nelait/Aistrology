@@ -432,16 +432,36 @@ body {
 .link { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 13px; text-decoration: underline; }
 
 /* ---------- Responsive ---------- */
+/* `1fr` is shorthand for `minmax(auto, 1fr)`, and `auto` as a *minimum* means
+   min-content — so a single-column grid still grows past the screen if any
+   child is intrinsically wide. The planet table (`white-space: nowrap` on every
+   cell) has a 737px min-content, which forced the whole page to scroll
+   sideways on phones and defeated the `.table-wrap { overflow-x: auto }` that
+   already wraps it. `minmax(0, 1fr)` pins the column to the container instead,
+   and the wrapper gets to do its job. */
 @media (max-width: 900px) {
-  .landing { grid-template-columns: 1fr; }
-  .chart-layout { grid-template-columns: 1fr; }
+  .landing { grid-template-columns: minmax(0, 1fr); }
+  .chart-layout { grid-template-columns: minmax(0, 1fr); }
+  .chart-layout > * { min-width: 0; }
   .chart-holder { position: static; }
-  .remedy-grid { grid-template-columns: 1fr; }
-  .antar-list { grid-template-columns: 1fr; }
+  .remedy-grid { grid-template-columns: minmax(0, 1fr); }
+  .antar-list { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 520px) {
-  .form-grid, .form-grid.three { grid-template-columns: 1fr; }
+  .form-grid, .form-grid.three { grid-template-columns: minmax(0, 1fr); }
   .app-header { flex-direction: column; align-items: flex-start; }
+}
+
+/* Mobile Safari zooms the page whenever a form control smaller than 16px takes
+   focus, and does not zoom back out on blur — so on a phone every tap into the
+   birth form, the chat box or a filter left the user pinching back out.
+   Twenty-odd rules set 13–15px; the tighter sizing is deliberate on desktop and
+   worth keeping, so rather than rewriting them all this overrides them for
+   phone widths only. `!important` is load-bearing: every one of those rules is
+   class-scoped and would otherwise outrank a bare element selector. Nothing in
+   the app sets a form control above 16px, so this only ever raises. */
+@media (max-width: 640px) {
+  input, select, textarea { font-size: 16px !important; }
 }
 
 /* ---------- Header identity cluster (profile + account, labeled) ---------- */
@@ -627,7 +647,7 @@ body {
 .export-lock-card h3 { margin: 0 0 10px; font-size: 19px; font-weight: 800; color: var(--ink); }
 .export-lock-card p { margin: 0 0 20px; font-size: 13.5px; line-height: 1.6; color: var(--muted); }
 .export-lock-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-@media (max-width: 480px) { .export-lock-actions { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .export-lock-actions { grid-template-columns: minmax(0, 1fr); } }
 .locked-print { opacity: 0.95; }
 .export-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; position: sticky; top: 0; }
 .export-actions .primary { padding: 9px 16px; margin: 0 8px 0 0; }
@@ -813,7 +833,7 @@ body {
   .match-vs { padding-top: 0; }
   .match-dashboard { flex-direction: column; align-items: center; }
   .match-charts-row { flex-direction: column; align-items: center; }
-  .kuta-grid { grid-template-columns: 1fr; }
+  .kuta-grid { grid-template-columns: minmax(0, 1fr); }
   .manglik-row { flex-direction: column; }
   .match-report-pair { flex-direction: column; }
 }
@@ -859,7 +879,7 @@ body {
 
 @media (max-width: 640px) {
   .career-header { flex-direction: column; }
-  .career-factors { grid-template-columns: 1fr; }
+  .career-factors { grid-template-columns: minmax(0, 1fr); }
   .career-report-profile { flex-direction: column; }
 }
 
@@ -925,7 +945,7 @@ body {
 .period-remedies li { margin-bottom: 4px; color: rgba(255,255,255,0.7); }
 
 @media (max-width: 600px) {
-  .period-dual { grid-template-columns: 1fr; }
+  .period-dual { grid-template-columns: minmax(0, 1fr); }
 }
 @media print {
   .period-current { background: #f0f7ff; border-left-color: #369; }
@@ -999,8 +1019,8 @@ body {
 .plan-gate-card li::before { content: "✓ "; color: #22c55e; font-weight: 700; }
 
 @media (max-width: 700px) {
-  .billing-plans { grid-template-columns: 1fr; }
-  .plan-gate-cards { grid-template-columns: 1fr; }
+  .billing-plans { grid-template-columns: minmax(0, 1fr); }
+  .plan-gate-cards { grid-template-columns: minmax(0, 1fr); }
 }
 @media print {
   .plan-gate, .billing-container { display: none; }
@@ -1197,7 +1217,7 @@ body {
 .article-disclaimer p:last-child { margin-bottom: 0; }
 
 @media (max-width: 640px) {
-  .article-cards { grid-template-columns: 1fr; }
+  .article-cards { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---------- Consultation ---------- */
@@ -1331,7 +1351,7 @@ body {
 .consult-modal-actions .ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 10px; padding: 9px 16px; cursor: pointer; }
 
 @media (max-width: 560px) {
-  .cform-grid { grid-template-columns: 1fr; }
+  .cform-grid { grid-template-columns: minmax(0, 1fr); }
   .consult-upsell-btn { margin-left: 0; }
 }
 
@@ -1723,7 +1743,7 @@ body {
 .landing-temple h2 { margin: 8px 0; font-size: clamp(22px, 3vw, 27px); font-weight: 800; }
 .landing-temple-sub { max-width: 620px; margin: 0 auto 28px; font-size: 15px; line-height: 1.6; color: var(--muted); }
 .landing-temple-features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin: 0 auto 28px; max-width: 860px; }
-@media (max-width: 680px) { .landing-temple-features { grid-template-columns: 1fr; } }
+@media (max-width: 680px) { .landing-temple-features { grid-template-columns: minmax(0, 1fr); } }
 .landing-temple-feat {
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 24px 16px;
   text-align: center; transition: border-color 0.2s, transform 0.2s;
@@ -1894,7 +1914,7 @@ body {
 .doshas-head p { max-width: 72ch; margin: 0; }
 .doshas-count { margin: 0; }
 .doshas-note { max-width: 72ch; margin-top: 4px; }
-.doshas-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.doshas-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
 
 .dosha-card {
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
@@ -1958,11 +1978,11 @@ body {
 .muhurta-form input:focus, .muhurta-form select:focus { outline: 2px solid var(--accent-2); border-color: var(--accent-2); }
 .muhurta-form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 .muhurta-form .primary { align-self: flex-start; }
-@media (max-width: 600px) { .muhurta-form-grid { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .muhurta-form-grid { grid-template-columns: minmax(0, 1fr); } }
 
 .muhurta-results-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .muhurta-results-head h3 { margin: 0; font-size: 17px; }
-.muhurta-days { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.muhurta-days { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
 .muhurta-note { max-width: 72ch; }
 
 .muhurta-card {
@@ -1995,7 +2015,7 @@ body {
 .muhurta-slot { font-size: 12px; color: var(--ink); }
 .muhurta-reasons { margin: 2px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
 .muhurta-reasons li { font-size: 12px; color: var(--muted); line-height: 1.45; }
-@media (max-width: 420px) { .muhurta-windows { grid-template-columns: 1fr; } }
+@media (max-width: 420px) { .muhurta-windows { grid-template-columns: minmax(0, 1fr); } }
 
 /* Muhurta quick-pick cities */
 .muhurta-quick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -2020,7 +2040,7 @@ body {
 .contact-form input:focus, .contact-form select:focus, .contact-form textarea:focus { outline: 2px solid var(--accent-2); border-color: var(--accent-2); }
 .contact-form .primary { align-self: flex-start; }
 .contact-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-@media (max-width: 560px) { .contact-form-grid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .contact-form-grid { grid-template-columns: minmax(0, 1fr); } }
 .contact-sent {
   text-align: center; padding: 40px 24px;
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
@@ -2057,7 +2077,9 @@ body {
 }
 .chat-fab:hover { filter: brightness(1.05); }
 .chat-window {
-  width: min(380px, calc(100vw - 40px)); height: min(560px, calc(100vh - 120px));
+  width: min(380px, calc(100vw - 40px));
+  height: min(560px, calc(100vh - 120px));
+  height: min(560px, calc(100dvh - 120px));
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden;
 }
@@ -2358,14 +2380,14 @@ body {
 .chat-input input:focus { outline: none; border-color: var(--accent); }
 .chat-input .primary { padding: 9px 14px; }
 @media (max-width: 480px) {
-  .chat-window { width: calc(100vw - 24px); height: calc(100vh - 100px); }
+  .chat-window { width: calc(100vw - 24px); height: calc(100vh - 100px); height: calc(100dvh - 100px); }
   .chat-widget { right: 12px; bottom: 12px; }
 }
 
 /* ── Celebrity sample-chart picker ────────────────────────────────────── */
 .chip-more { border-style: dashed; color: var(--gold); }
 .chip-more:hover { border-color: var(--gold); }
-.celeb-modal { width: 660px; display: flex; flex-direction: column; max-height: calc(100vh - 120px); }
+.celeb-modal { width: 660px; display: flex; flex-direction: column; max-height: calc(100vh - 120px); max-height: calc(100dvh - 120px); }
 .celeb-intro { margin: 0 0 14px; line-height: 1.55; }
 .celeb-controls { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
 .celeb-search {
@@ -2404,7 +2426,7 @@ body {
      of overlapping, and square off the container so wrapping looks deliberate. */
   .celeb-regions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; border-radius: 12px; }
   .celeb-regions button { min-width: 0; font-size: 11.5px; padding: 8px 6px; border-radius: 8px; }
-  .celeb-modal { max-height: calc(100vh - 60px); }
+  .celeb-modal { max-height: calc(100vh - 60px); max-height: calc(100dvh - 60px); }
 }
 
 /* ── Feature feedback ("Was this helpful?") ─────────────────────────────── */
