@@ -1,6 +1,6 @@
 # Mobile Responsiveness — Analysis & Plan
 
-Status: **Phase 1 shipped.** Phases 2–4 planned, not started.
+Status: **Phases 1–2 shipped.** Phases 3–4 planned, not started.
 
 ## How this was measured
 
@@ -72,7 +72,7 @@ item, so its wrapper actually bounds it.
 
 The table then scrolls inside its own wrapper, exactly like Transit.
 
-### F2 — 1,242px of chrome before content (P1, the main problem)
+### F2 — 1,242px of chrome before content (P1, **fixed**)
 
 Absolute document offsets at 375×812:
 
@@ -194,11 +194,28 @@ keeping. One scoped block preserves it and fixes the phone:
 
 CSS-only, no component changes, no behaviour change above 640px.
 
-### Phase 2 — Reclaim the screen (the real work)
+### Phase 2 — Reclaim the screen ✅ shipped
 
-Target: content starts at **~200px** instead of 1,242px.
+Measured at 375×812, first content pixel: **1,242px → 353px.**
 
-**2.1 — Module navigation: 575px → ~52px.** Replace the wrapping wall at
+| Band | Before | After |
+| ---- | -----: | ----: |
+| `.app-header` | 418px | **195px** |
+| `.tabs` | 575px | **63px** |
+| `.calc-settings` | 203px | **63px** |
+| **Content starts at** | **1,242px** | **353px** |
+
+Verified: all 20 tabs still report `scrollWidth === 375`; the strip pins to the
+top (`getBoundingClientRect().top === 0` at `scrollY` 900) and centres the
+active tab on a programmatic change; the settings disclosure goes 63 ↔ 249px
+and back. Re-checked at 360×740 (no overlap, same 353px), 700×900 (strip
+active, header still desktop-style), 768×1024 (unchanged — below the strip's
+720px breakpoint the nav is still a 233px wall, which is 23% of a 1024px screen
+rather than 71% of an 812px one, so it was left alone) and 1280px, where the
+header is byte-for-byte what it was: identity still `flex` not `grid`, the
+`UNSAVED` badge and the account name still shown, pill still 279px.
+
+**2.1 — Module navigation: 575px → 63px.** ✅ Replace the wrapping wall at
 ≤720px with a single horizontally-scrolling strip: hide `.tab-sub`, one row,
 `scroll-snap-type: x proximity`, and scroll the active tab into view on
 change. Sticky under the header so switching modules never requires scrolling
@@ -208,21 +225,35 @@ Considered and rejected: a `<select>` dropdown (kills discoverability — users
 would stop finding Muhurta and Vastu), and a bottom tab bar (only fits 5 of 19
 and hides the rest behind "More").
 
-**2.2 — Header: 418px → ~90px.** The labelled two-block identity cluster
+**2.2 — Header: 418px → 195px.** ✅ The labelled two-block identity cluster
 ("VIEWING PROFILE" / "SIGNED IN AS") was built to a desktop brief and is right
 there. On phones it should collapse to one row: brand mark, profile pill
 (name + ▾), avatar. The tagline, the full birth-detail line, and the
 Export / Reminders / Consultation buttons move into the profile and account
 menus, which already exist. *Saves ~320px.*
 
-**2.3 — Calculation settings: 203px → ~44px.** Ayanamsa, lunar node and
+**2.3 — Calculation settings: 203px → 63px.** ✅ Ayanamsa, lunar node and
 language are set once and rarely revisited. Collapse them behind a
 `⚙ Chart settings` disclosure at ≤720px, closed by default, showing the
 current values as a summary line. *Saves ~160px.*
 
-This phase touches `App.tsx` and the header components, so it needs component
-tests alongside — the widget-visibility logic (what collapses when) is testable
-in jsdom even though layout is not.
+**Two things the plan got wrong, found only by building it:**
+
+- *`behavior: "smooth"` does not work on a scroll-snap container.* The
+  "centre the active tab" scroll silently sprang back to where it started; the
+  default (instant) behaviour lands and snaps correctly. Measured both ways.
+- *The header collapse needed `display: contents`, not flexbox.* Simply putting
+  the two identity blocks on one row left the profile pill — which lives inside
+  a `.profile-switcher` wrapper — resolving its `max-width: 100%` against a
+  wrapper that was itself content-sized. The pill rendered 279px wide inside a
+  138px column and drew straight over the notification bell. Dissolving both
+  blocks with `display: contents` and placing their children explicitly in one
+  grid fixes it *and* frees the birth-detail line to span the full width
+  instead of being trapped in a 138px column, where it read `01/01/1990 · 1…`.
+
+Layout is not testable in jsdom, so the two mechanisms are guarded at the
+stylesheet level instead (`styles.mobile.test.ts`) — both assertions were
+confirmed to fail when the rules are removed.
 
 ### Phase 3 — Touch and polish
 

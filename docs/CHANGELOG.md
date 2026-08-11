@@ -173,6 +173,50 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Mobile responsiveness — Phase 2
+
+Reclaiming the screen: on a 375×812 phone the first pixel of content sat at
+**1,242px** — 1.5 screenfuls of header and navigation on every tab, every visit.
+Now **353px**.
+
+- **Tab nav 575px → 63px.** Nineteen tabs wrapping into eight rows (71% of the
+  viewport) became one horizontally-scrolling, scroll-snapping strip at ≤720px:
+  sub-labels hidden, bleeding to the screen edges so it reads as scrollable, and
+  **sticky at the top** so switching module never means scrolling back up. A
+  `<select>` would have been smaller still, but it hides eighteen options behind
+  a tap — nobody would discover Muhurta or Vastu again.
+- **A `useEffect` centres the active tab** when it changes from anywhere other
+  than a tap on it (loading a profile, a feature flag falling back to Kundli, a
+  lesson's "see this in your chart" link). It scrolls the strip only —
+  `scrollIntoView()` would move the page vertically and fight the sticky strip.
+  **`behavior: "smooth"` had to be dropped**: a scroll-snap container cancels a
+  smooth programmatic scroll and springs back, measured — the default lands and
+  snaps correctly.
+- **Header 418px → 195px.** Tagline hidden, brand scaled down, and the two
+  identity blocks put on one row. That last part needed `display: contents`
+  rather than flexbox: the profile pill lives inside a `.profile-switcher`
+  wrapper, so its `max-width: 100%` resolved against a wrapper that was itself
+  content-sized — the pill rendered **279px wide inside a 138px column and drew
+  straight over the notification bell**. Dissolving both blocks into one grid
+  with explicit placement fixes the overlap *and* lets the birth-detail line
+  span the full width, where it reads in full instead of `01/01/1990 · 1…`.
+  The labels the header was designed around ("Viewing profile" / "Signed in as")
+  are kept; the `UNSAVED` badge and the account name give up their width to the
+  profile name, which is what the pill is for.
+- **Chart settings 203px → 63px.** Ayanamsa, lunar node and language are set
+  once and rarely revisited, so on phones they collapse behind a
+  `⚙ Chart settings · Lahiri (Chitrapaksha) · Mean node · English ▾` summary.
+  The fields are always rendered — only CSS hides them — so desktop is
+  untouched and the toggle never appears there.
+- Verified at 375×812 (all 20 tabs `scrollWidth === 375`; strip pins at
+  `top === 0` when scrolled; disclosure 63 ↔ 249px; a 26-character profile name
+  truncates with an ellipsis and stays in its column), 360×740, 700×900,
+  768×1024 and 1280px — where the header is exactly what it was: identity still
+  `flex` not `grid`, badge and account name still shown, pill still 279px.
+- Two more CSS-source guards, both confirmed to fail when the rules are removed.
+- Files: `src/App.tsx`, `src/styles.css`, `src/styles.mobile.test.ts`,
+  `docs/mobile-responsive.md`.
+
 ## Mobile responsiveness — Phase 1
 
 Audit in [`docs/mobile-responsive.md`](mobile-responsive.md); this is the

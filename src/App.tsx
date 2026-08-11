@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "./auth/AuthProvider";
 import { api } from "./api/client";
 import BirthForm from "./components/BirthForm";
@@ -113,6 +113,10 @@ export default function App() {
   const [resendMsg, setResendMsg] = useState<string | null>(null);
   const [limitPlan, setLimitPlan] = useState<string | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
+  // Chart settings are collapsed on phones (see .calc-settings-toggle); the
+  // fields are always rendered, so this does nothing above 720px.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const tabsRef = useRef<HTMLElement | null>(null);
   // Top-level pages. These are chart-independent, reachable from the header
   // and/or the home page.
   const [page, setPage] = useState<"main" | "consult" | "admin" | "temple" | "reminders" | "contact">("main");
@@ -140,6 +144,24 @@ export default function App() {
   useEffect(() => {
     if (!visibleTabs.some((t) => t.id === tab)) setTab("chart");
   }, [visibleTabs, tab]);
+
+  // On phones the tab row is a horizontal scroller, so a tab set from anywhere
+  // other than a tap on it — loading a profile, a feature flag falling back to
+  // Kundli, a lesson's "see this in your chart" link — can land off-screen.
+  // Scrolls the strip only: scrollIntoView() would also move the page
+  // vertically, fighting the sticky strip. No-op when nothing overflows.
+  useEffect(() => {
+    const nav = tabsRef.current;
+    if (!nav || nav.scrollWidth <= nav.clientWidth) return;
+    const active = nav.querySelector<HTMLElement>(".tab.active");
+    if (!active) return;
+    const centred = active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2;
+    // Instant, not smooth: the strip is a scroll-snap container, and a snap
+    // container cancels a smooth programmatic scroll and springs back to where
+    // it was (measured — `behavior: "smooth"` left scrollLeft untouched while
+    // the default landed and snapped correctly).
+    nav.scrollTo({ left: Math.max(0, centred) });
+  }, [tab]);
 
   // When the user signs out, drop the loaded chart so we return to the home
   // (landing) screen instead of staying on the tabbed reading view.
@@ -635,7 +657,7 @@ export default function App() {
         </main>
       ) : (
         <>
-          <nav className="tabs">
+          <nav className="tabs" ref={tabsRef}>
             {visibleTabs.map((t) => (
               <button
                 key={t.id}
@@ -648,7 +670,23 @@ export default function App() {
             ))}
           </nav>
 
-          <div className="calc-settings">
+          <div className={`calc-settings${settingsOpen ? " open" : ""}`}>
+            {/* Phone-only (CSS hides it above 720px) — the fields below are
+                always rendered, so nothing here changes on desktop. */}
+            <button
+              type="button"
+              className="calc-settings-toggle"
+              aria-expanded={settingsOpen}
+              onClick={() => setSettingsOpen((v) => !v)}
+            >
+              <span>⚙ Chart settings</span>
+              <span className="cst-values muted">
+                {AYANAMSAS.find((a) => a.code === ayanamsa)?.name ?? ayanamsa}
+                {" · "}{nodeType === "mean" ? "Mean node" : "True node"}
+                {" · "}{language.native}
+              </span>
+              <span className="cst-caret muted">▾</span>
+            </button>
             <label>
               <span className="muted">Ayanamsa</span>
               <select

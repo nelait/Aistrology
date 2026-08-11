@@ -94,6 +94,31 @@ describe("stylesheet — mobile guards", () => {
     expect(dvh, `${vh} calc(100vh …) uses but only ${dvh} dvh fallbacks`).toBe(vh);
   });
 
+  it("the tab wall becomes one scrolling row on phones", () => {
+    // 19 tabs wrapping at 375px was 575px tall — 71% of the viewport, above
+    // every screen of content. The strip is what replaces it; if these rules
+    // are lost the wall comes straight back, and jsdom cannot see that.
+    const phone = CSS.match(
+      /@media\s*\(\s*max-width:\s*720px\s*\)\s*\{([\s\S]*?)\n\}/,
+    )?.[1];
+    expect(phone, "the ≤720px block is missing").toBeDefined();
+    const tabs = rules(phone!).find((r) => r.selector === ".tabs")?.body ?? "";
+    expect(tabs).toMatch(/flex-wrap:\s*nowrap/);
+    expect(tabs).toMatch(/overflow-x:\s*auto/);
+    expect(tabs).toMatch(/position:\s*sticky/);
+    expect(phone).toMatch(/\.tab\s+\.tab-sub\s*\{\s*display:\s*none/);
+  });
+
+  it("the chart-settings toggle is phone-only", () => {
+    // The three selects are always rendered — only CSS hides them — so the
+    // toggle must be display:none by default or it shows up on desktop.
+    const base = rules(CSS.replace(/@media[^{]*\{(?:[^{}]|\{[^{}]*\})*\}/g, ""))
+      .find((r) => r.selector === ".calc-settings-toggle");
+    expect(base?.body, ".calc-settings-toggle has no base rule").toBeDefined();
+    expect(base!.body).toMatch(/display:\s*none/);
+    expect(CSS).toMatch(/\.calc-settings:not\(\.open\)/);
+  });
+
   it("no auto-fill grid demands more width than a 320px phone has", () => {
     // A 320px-wide device (iPhone SE 1st gen) leaves ~288px inside the page
     // padding, so a minmax() minimum above that overflows its container.

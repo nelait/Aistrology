@@ -263,6 +263,39 @@ body {
 }
 .tab.active .tab-sub { color: #eee; }
 
+/* On a phone the nineteen tabs wrapped into eight rows — 575px, 71% of the
+   viewport, above every single screen of content. One scrolling row instead:
+   the sub-labels go (they're a desktop nicety), the strip bleeds to the screen
+   edges so it reads as scrollable, and it sticks to the top so switching module
+   never means scrolling back up through the header. A <select> would have been
+   smaller still, but it hides eighteen options behind a tap — nobody would ever
+   discover Muhurta or Vastu again. */
+@media (max-width: 720px) {
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    margin: 0 -20px 16px;
+    padding: 8px 20px 10px;
+    background: var(--bg);
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    flex: 0 0 auto;
+    min-width: 0;
+    min-height: 44px;
+    justify-content: center;
+    padding: 10px 15px;
+    scroll-snap-align: start;
+  }
+  .tab .tab-sub { display: none; }
+}
+
 /* ---------- Cards ---------- */
 .card {
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
@@ -293,6 +326,31 @@ body {
 .calc-settings select { background: var(--panel); border: 1px solid var(--border); color: var(--ink); border-radius: 8px; padding: 6px 10px; font-size: 13px; color-scheme: dark; cursor: pointer; }
 .calc-settings select:focus { outline: 2px solid var(--accent-2); border-color: var(--accent-2); }
 .calc-note { margin-left: auto; }
+
+/* Ayanamsa, lunar node and language are set once and rarely revisited, but they
+   cost 203px at the top of every tab on a phone. Collapsed behind a summary
+   line there; unchanged (and the toggle absent) everywhere else. */
+.calc-settings-toggle { display: none; }
+@media (max-width: 720px) {
+  .calc-settings { gap: 12px; padding: 10px 0 8px; }
+  .calc-settings-toggle {
+    display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px;
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--ink); font-size: 13.5px; font-weight: 600; text-align: left;
+  }
+  .calc-settings-toggle .cst-values {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 400;
+  }
+  .calc-settings-toggle .cst-caret { flex: none; transition: transform 0.15s; }
+  .calc-settings.open .calc-settings-toggle .cst-caret { transform: rotate(180deg); }
+  .calc-settings:not(.open) > label,
+  .calc-settings:not(.open) > .calc-note,
+  .calc-settings:not(.open) > .translate-btn { display: none; }
+  .calc-settings > label { width: 100%; justify-content: space-between; }
+  .calc-settings > label select { flex: 1; min-width: 0; margin-left: 12px; }
+  .calc-note { margin-left: 0; }
+}
 .chart-layout { display: grid; grid-template-columns: 420px 1fr; gap: 24px; align-items: start; }
 .chart-holder { position: sticky; top: 12px; }
 .kundli {
@@ -476,13 +534,61 @@ body {
 /* Uniform control height so the two pills sit on the same line. */
 .profile-pill, .account-btn, .notif-btn { min-height: 42px; box-sizing: border-box; }
 .header-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; width: 100%; }
+/* The header was 418px on a 375px-wide phone — half the screen, before a single
+   pixel of chart. The labels stay (they are what makes two near-identical pills
+   legible, and were asked for), but nothing else gets to stack: the two
+   identity blocks share one row, the tagline goes, and the birth line — the
+   longest string in the header — is held to one line with an ellipsis instead
+   of wrapping to three. */
 @media (max-width: 640px) {
-  .header-identity { margin-left: 0; width: 100%; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .header-identity .id-block, .header-identity .id-block.id-account { align-items: flex-start; }
-  .id-block.id-account { padding-left: 12px; }
+  .app-header { gap: 10px 12px; padding: 12px 4px 10px; }
+  .brand { gap: 10px; }
+  .logo { font-size: 30px; }
+  .brand h1 { font-size: 21px; }
+  .tagline { display: none; }
+
+  /* Two side-by-side columns stacked into four rows, and the birth line — the
+     longest string in the header — trapped in whichever column it belonged to.
+     `display: contents` dissolves the two blocks so their children become items
+     of one grid: profile down the left, account down the right, and the birth
+     line spanning the full width where it can actually be read. Explicit
+     placement because auto-flow would interleave the two columns. */
+  .header-identity {
+    margin-left: 0; width: 100%;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 12px; row-gap: 6px; align-items: center;
+  }
+  .header-identity > .id-block { display: contents; }
+  .header-identity > .id-block:not(.id-account) > .id-label { grid-area: 1 / 1; }
+  .header-identity > .id-block:not(.id-account) > .profile-switcher { grid-area: 2 / 1; }
+  .header-identity > .id-block:not(.id-account) > .native-summary { grid-area: 3 / 1 / 4 / -1; }
+  .header-identity > .id-account > .id-label { grid-area: 1 / 2; }
+  .header-identity > .id-account > .id-account-row { grid-area: 2 / 2; }
   .id-label { padding-right: 0; }
-  .header-identity .account-btn { max-width: 150px; }
-  .header-identity .profile-pill { max-width: 200px; }
+
+  /* The pill sits inside .profile-switcher, so its own `max-width: 100%`
+     resolved against a wrapper that was itself content-sized — the pill grew to
+     279px inside a 138px block and drew straight over the notification bell. */
+  .header-identity .profile-switcher { min-width: 0; max-width: 100%; }
+  .header-identity .profile-pill { max-width: 100%; width: 100%; }
+  .header-identity .profile-pill-name { flex: 1 1 auto; min-width: 0; }
+  /* The name is what the pill is for — give it the badge's width. */
+  .header-identity .profile-pill-badge { display: none; }
+  /* Avatar + chevron is enough here; the name is in the menu it opens. */
+  .header-identity .account-btn { max-width: none; padding: 7px 10px; }
+  .header-identity .account-btn .account-name { display: none; }
+
+  .native-summary { flex-wrap: nowrap; justify-content: flex-start; gap: 8px; width: 100%; }
+  .native-summary > .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .native-summary .link { flex: none; }
+
+  /* One scrolling row whatever the role adds, instead of wrapping to two. */
+  .header-nav {
+    flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start;
+    gap: 6px; scrollbar-width: none;
+  }
+  .header-nav::-webkit-scrollbar { display: none; }
+  .header-nav > * { flex: 0 0 auto; }
 }
 .account { position: relative; }
 .account-btn { display: inline-flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); color: var(--ink); padding: 7px 14px; border-radius: 12px; cursor: pointer; font-size: 13px; max-width: 220px; }
