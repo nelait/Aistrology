@@ -1,9 +1,9 @@
 # Birth-Time Rectification & Event Analysis — Research and Plan
 
-Status: **Phases A, B and C shipped** (event capture and analysis with a null
-arm; the ablation study; and the engine work it called for). Rectification
-itself is not built — but Phase B measured that it will work, and which layers
-it should use.
+Status: **Phases A–D shipped.** Rectification is live under
+**Events → Unknown birth time**, using the layers Phase B measured and the
+engine Phase C added. Phases E (LLM narration) and F (opt-in accuracy
+collection) are not started.
 
 Two features were asked for:
 
@@ -410,6 +410,50 @@ around March 2011 — does that match anything?"). A yes/no answer is a new
 constraint and re-runs the scan. This turns rectification into a conversation,
 which is both better UX and better inference.
 
+### As shipped
+
+`src/astro/rectify.ts` + `src/components/RectifyView.tsx`.
+
+Measured on a hidden birth time of 09:42, with five well-dated events:
+**window 09:37–09:53, verdict "Narrowed", z = 10.1 above the null**, all five
+events agreeing. Run against the same profile with roughly-guessed dates it
+returns **Inconclusive**, which is the point.
+
+Three decisions came out of measurement rather than design:
+
+**1. The null arm decides the verdict, not the peak.** The scorer peaks sharply
+whatever dates it is given — arbitrary dates measured 2.9 standard deviations
+above the day's own mean, which reads as high confidence and means nothing. So
+the same scan runs on shuffled dates and the real separation is judged against
+that distribution. A first attempt used a *percentile* over the null runs and
+had to be abandoned: the false-positive rate moved from 20% to 36% purely by
+changing the number of null runs from 6 to 20, because finer rank granularity
+let more sets clear the bar. The z-score does not drift that way.
+
+**2. The threshold is deliberately conservative.** Measured over 30 charts,
+arbitrary dates as control and model-optimal dates as signal:
+
+| Threshold | False positives | True positives |
+| --- | --: | --: |
+| z ≥ 2.0 | 20% | 97% |
+| z ≥ 3.0 | 10% | 87% |
+| **z ≥ 3.5** | **7%** | **77%** |
+| z ≥ 4.0 | 3% | 70% |
+
+The distributions genuinely overlap — arbitrary dates reached z = 4.29 at worst,
+real events fell to 1.92 at best — so no threshold separates them cleanly.
+Telling someone their birth time was found in noise is a worse failure than
+telling them to add more events, and "inconclusive" is an honest, actionable
+answer. Note also that the signal arm is the easiest possible case, so the
+real-world true-positive rate will be below 77%.
+
+**3. The window is widened to what the dates support.** The scoring plateau on
+its own overstates the result: measured against known birth times, 6-minute
+plateaus routinely sat 11 minutes from the truth. Windows are widened to
+±1.5 × the precision the dates allow (a *median* error means half of cases
+exceed it), and the raw plateau is kept alongside for reference. After the
+change the true time fell inside the reported window in every test case.
+
 ### The honest ceiling
 
 | Claim | Defensible? |
@@ -521,7 +565,7 @@ the error and not the events, and is a Phase F item.
 | **A** ✅ | Event capture (taxonomy, date precision, per-profile storage) + Feature 2 deterministic explanation, no LLM, **plus the null arm** | Ships user value alone; produces the scorer Feature 1 needs |
 | **B** ✅ | Ablation harness (`npm run ablation`) + identifiability study | Settled which layers Phase D should use, and bounded what it may claim |
 | **C** ✅ | Fixed the dasha anchor; added Ashtakavarga, D4, D16, D24, D30 and D60 | Accuracy prerequisites for fine resolution |
-| **D** | Rectification scan, heatmap, confidence UI, retrodiction loop | The headline feature, on a scorer that has been tested |
+| **D** ✅ | Rectification scan, heatmap, confidence UI | The headline feature, on a scorer that has been tested. The retrodiction loop is the one piece not built. |
 | **E** | LLM narration over the deterministic reasons | Reuses the *Justify* pattern and its quota |
 | **F** | Opt-in accuracy collection from users who know their birth time | The only licence-clean route to real ground truth |
 

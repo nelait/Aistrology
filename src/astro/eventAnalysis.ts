@@ -206,6 +206,10 @@ const ALL_LAYERS: Required<LayerSwitches> = {
   dasha: true, boundary: true, transit: true, varga: true, yoga: true,
 };
 
+/** Stand-ins for the layers that are switched off — never read in that case. */
+const EMPTY_YOGAS: Yoga[] = [];
+const EMPTY_AV: AshtakavargaResult = { bav: [], sav: new Array(12).fill(0), savTotal: 0 };
+
 export interface AnalyseOptions {
   /** Turn scoring layers off. Omit for all of them. */
   layers?: LayerSwitches;
@@ -561,10 +565,14 @@ export function scoreEventDate(
   options: Pick<AnalyseOptions, "dashas" | "yogas" | "ashtakavarga" | "layers"> = {},
 ): number {
   const k = EVENT_KARAKA_BY_ID[event.type];
-  const dashas = options.dashas ?? dashaTreeFor(chart);
-  const yogas = options.yogas ?? detectYogas(chart);
-  const av = options.ashtakavarga ?? computeAshtakavarga(chart);
   const on: Required<LayerSwitches> = { ...ALL_LAYERS, ...(options.layers ?? {}) };
+  const dashas = options.dashas ?? dashaTreeFor(chart);
+  // Only pay for what the live layers actually read. Rectification runs this
+  // once per candidate birth time per event with three layers off, so
+  // computing yogas and an ashtakavarga nobody consults would be most of the
+  // cost of the scan.
+  const yogas = options.yogas ?? (on.yoga ? detectYogas(chart) : EMPTY_YOGAS);
+  const av = options.ashtakavarga ?? (on.transit ? computeAshtakavarga(chart) : EMPTY_AV);
   return round1(
     scoreDate(chart, dashas, yogas, av, k, event.date, PRECISION_WINDOW_DAYS[event.precision], false, on)
       .total,

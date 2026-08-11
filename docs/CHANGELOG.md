@@ -173,6 +173,62 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Birth-time rectification
+
+Phase D of [rectification & event analysis](rectification-and-event-analysis.md).
+**Events → Unknown birth time**: given the dated events already on a profile,
+scan every candidate minute of the day and report the windows that fit.
+
+Validated against a hidden birth time of 09:42 with five well-dated events —
+**window 09:37–09:53, "Narrowed", z = 10.1 above the null**, all five agreeing.
+The same profile with roughly-guessed dates returns **Inconclusive**, which is
+the point of the thing.
+
+- **It reports a window, never a time**, and the window is widened to the
+  precision the dates support. The raw scoring plateau overstates the result:
+  measured against known birth times, 6-minute plateaus routinely sat 11 minutes
+  from the truth, so windows are widened to ±1.5× what the dates allow. After
+  that change the true time fell inside the reported window in every test case.
+- **The verdict comes from a null arm, not from the peak.** The scorer peaks
+  sharply whatever dates it is given — arbitrary dates measured 2.9 standard
+  deviations above the day's own mean, which reads as confidence and means
+  nothing. The same scan is re-run on shuffled dates and the real separation
+  judged against that.
+- **A percentile threshold had to be thrown away.** It looked fine at six null
+  runs and fell apart at twenty: the false-positive rate on arbitrary dates went
+  20% → 36% purely because finer rank granularity let more sets clear the bar. A
+  z-score against the null distribution does not drift with run count.
+- **The operating point is deliberately conservative** — z ≥ 3.5, measured at 7%
+  false positives and 77% true positives over 30 charts. The distributions
+  genuinely overlap (arbitrary dates reached z = 4.29; real events fell to 1.92),
+  so no threshold separates them cleanly. Telling someone their birth time was
+  found in noise is worse than telling them to add more events.
+- **Only the `dasha` and `boundary` layers run**, per the Phase B ablation, which
+  also makes the scan cheaper — the scorer now skips computing yogas and an
+  ashtakavarga that switched-off layers would never read.
+- **The scan is a generator driven in 40ms slices**, so the page stays
+  responsive and shows progress. The hop between slices goes through a
+  `MessageChannel`, not `setTimeout`: `setTimeout(…, 0)` is clamped to 4ms in a
+  foreground tab and to a **full second** in a background one, which turned a
+  400ms scan into eighteen seconds when the tab lost focus. Measured 17.9s →
+  1.07s on the same backgrounded tab.
+- **The heatmap draws window markers as an overlay, and downsamples.** With one
+  bar per candidate, 480 flex items with a 1px gap need 479px of gap in a 335px
+  phone strip — the bars collapsed to nothing. It now buckets to ~110 bars
+  keeping each bucket's peak, and the winning window is an absolutely-positioned
+  band with a minimum width, because a 16-minute window across a day is
+  sub-pixel and that band is the one thing the picture exists to show.
+- **Dissenting events are named.** Each event is reported with where the winning
+  window sits among that event's own scores across the day, and the copy says
+  plainly that a dissenting event is worth more than an agreeing one — either
+  its date is wrong or the window is.
+- 10 new tests, 401 pass. The control test asserts a *rate* rather than
+  perfection, because 7% of arbitrary date sets do get through.
+- Files: `src/astro/rectify.ts` (+ `.test.ts`),
+  `src/components/RectifyView.tsx`, `src/components/EventsTab.tsx`,
+  `src/components/LifeEventsView.tsx`, `src/astro/eventAnalysis.ts`,
+  `src/styles.css`.
+
 ## Ashtakavarga, the finer vargas, and a timezone bug in the dasha timeline
 
 Phase C of [rectification & event analysis](rectification-and-event-analysis.md)

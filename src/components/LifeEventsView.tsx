@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Chart } from "../astro/types";
 import { api, ApiLifeEvent } from "../api/client";
 import { usePublishChatContext } from "../chat/AstroChat";
@@ -22,6 +22,11 @@ import { ordinal } from "../astro/interpret";
 interface Props {
   chart: Chart;
   chartId: string | null;
+  /** Owned by EventsTab, because the rectification view needs the same list. */
+  events: ApiLifeEvent[];
+  loading: boolean;
+  loadError: string | null;
+  onChange: (events: ApiLifeEvent[]) => void;
 }
 
 const BAND_LABEL: Record<EventBand, string> = {
@@ -57,9 +62,9 @@ function fmt(d: Date): string {
   });
 }
 
-export default function LifeEventsView({ chart, chartId }: Props) {
-  const [events, setEvents] = useState<ApiLifeEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function LifeEventsView({
+  chart, chartId, events, loading, loadError, onChange,
+}: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -70,17 +75,6 @@ export default function LifeEventsView({ chart, chartId }: Props) {
   const [precision, setPrecision] = useState<DatePrecision>("exact");
   const [confidence, setConfidence] = useState<EventConfidence>("sure");
   const [note, setNote] = useState("");
-
-  const load = useCallback(() => {
-    if (!chartId) { setEvents([]); setLoading(false); return; }
-    setLoading(true);
-    api.listLifeEvents(chartId)
-      .then(setEvents)
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not load events"))
-      .finally(() => setLoading(false));
-  }, [chartId]);
-
-  useEffect(() => { load(); }, [load]);
 
   // All the analysis is local — the chart, the dashas and the null arm never
   // leave the browser. See docs/rectification-and-event-analysis.md.
@@ -117,7 +111,7 @@ export default function LifeEventsView({ chart, chartId }: Props) {
     setError(null);
     try {
       const created = await api.createLifeEvent(chartId, { type, eventDate: date, precision, confidence, note });
-      setEvents((prev) => [...prev, created].sort((a, b) => a.eventDate.localeCompare(b.eventDate)));
+      onChange([...events, created].sort((a, b) => a.eventDate.localeCompare(b.eventDate)));
       setDate("");
       setNote("");
     } catch (err) {
@@ -131,7 +125,7 @@ export default function LifeEventsView({ chart, chartId }: Props) {
     setBusy(true);
     try {
       await api.deleteLifeEvent(id);
-      setEvents((prev) => prev.filter((e) => e.id !== id));
+      onChange(events.filter((e) => e.id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not remove that event");
     } finally {
@@ -212,7 +206,7 @@ export default function LifeEventsView({ chart, chartId }: Props) {
         </div>
       </form>
 
-      {error && <p className="error small">{error}</p>}
+      {(error || loadError) && <p className="error small">{error ?? loadError}</p>}
 
       {loading ? (
         <p className="muted small">Loading your events…</p>
