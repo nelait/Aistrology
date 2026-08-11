@@ -1,6 +1,6 @@
 # Mobile Responsiveness — Analysis & Plan
 
-Status: **Phases 1–2 shipped.** Phases 3–4 planned, not started.
+Status: **all four phases shipped.**
 
 ## How this was measured
 
@@ -105,7 +105,7 @@ plus `.chat-input input` (13px), `.calc-settings select` (13px),
 So on an iPhone: tap the birth-date field → the page jumps and zooms → the
 user pinches back out → taps the next field → it happens again.
 
-### F4 — Tap targets below 44px (P2)
+### F4 — Tap targets below 44px (P2, **fixed**)
 
 A sample of one tab found 10 interactive elements under 40px tall, including
 `.export-btn` (37px), `.nav-consult-btn` (37px), the `.calc-settings` selects
@@ -120,7 +120,7 @@ Chrome Android `100vh` is the *large* viewport height — it excludes the URL
 bar that is actually on screen — so the bottom of the chat window (the input
 row) can sit underneath the browser chrome. `100dvh` is the fix.
 
-### F6 — Everything ships to every phone (P2, performance)
+### F6 — Everything ships to every phone (P2, **fixed**)
 
 Production build: **752KB JS (219KB gzipped)** in a single chunk, plus 120KB
 CSS (21KB gz). Nothing is code-split.
@@ -135,7 +135,7 @@ The two obvious passengers:
 That is ~17% of the source bundle downloaded on a phone by users who will
 never render it.
 
-### F7 — Breakpoints are ad hoc (P3, maintainability)
+### F7 — Breakpoints are ad hoc (P3, **fixed**)
 
 Eleven distinct `max-width` values are in use: 420, 480, 520, 560, 600, 640,
 680, 700, 720, 820, 900. Each was chosen locally, for one component, at the
@@ -255,7 +255,34 @@ Layout is not testable in jsdom, so the two mechanisms are guarded at the
 stylesheet level instead (`styles.mobile.test.ts`) — both assertions were
 confirmed to fail when the rules are removed.
 
-### Phase 3 — Touch and polish
+### Phase 3 — Touch and polish ✅ shipped
+
+Zero controls under 44px on any of the 20 tabs at 375px (was 10 on the one tab
+sampled, and more once every tab was swept — sub-tabs at 31px, antardasha rows
+at 40px, the Vastu selects at 37px, the plan buttons at 36px). The admin nav
+went from a **210px wall to a 57px strip**, verified by injecting the real admin
+markup into the live page rather than guessing, since an admin session was not
+available in the browser.
+
+Two things worth recording, because the plan called this phase "mechanical, low
+risk" and only one half of that was true:
+
+- **The touch-target rules had to go last in the file.** Several controls carry
+  an earlier, more specific size — the header pills are pinned to 42px so they
+  line up with each other — and at equal specificity source order decides. In
+  the middle of the file the rule silently lost.
+- **The breakpoint migration is not neutral, it is directional.** Every value
+  moved *outward* (≤600 → 640, ≥680 → 900), so content now collapses at a
+  *wider* viewport than before, never a narrower one. That direction can't
+  introduce an overflow that wasn't already there, which is why it was safe to
+  do in bulk. The reverse would not have been.
+
+The one deliberate behaviour change: the nav strip and settings disclosure moved
+from 720px to the 900px token, so **iPad portrait (768px) now gets them too** —
+first content pixel there went 602px → 395px. That was the open question left at
+the end of Phase 2, answered in the direction the measurements pointed.
+
+#### Original plan
 
 - 3.1 Minimum 44px height for buttons, pills and selects at ≤640px (F4).
 - 3.2 Standardize on three breakpoints and migrate the eleven existing values
@@ -265,7 +292,40 @@ confirmed to fail when the rules are removed.
   tables already use `.admin-table-wrap`, but the 14-item section nav will have
   the same wrapping problem as the module tabs and can reuse 2.1's strip.
 
-### Phase 4 — Payload
+### Phase 4 — Payload ✅ shipped
+
+| | Before | After |
+| --- | ---: | ---: |
+| Initial JS | 749.56 kB | **372.86 kB** |
+| **gzipped** | **219.38 kB** | **120.42 kB** |
+
+**−45% off the initial download**, and Vite's 500 kB chunk warning is gone.
+
+Beyond the two boundaries the plan named (admin console, lessons drawer), every
+secondary destination is now its own chunk — the three match views, Career,
+Health, Mental Health, Vastu, Muhurta, Pooja, Billing, Notes, Learn,
+Consultation, the temple portal, Reminders, Contact and the export modal. None
+of it is needed to render a kundli, which is what the overwhelming majority of
+visits do. A single `<Suspense>` wraps the tab area rather than one per view.
+
+Two details the plan didn't anticipate:
+
+- **The lessons drawer had to be split in two.** Lazy-loading it wholesale would
+  have taken the handle off screen until the chunk arrived. The handle and the
+  open/closed state stay eager in `LessonsDrawer`; everything behind them moved
+  to `LessonsPanel`, which is the lazy boundary.
+- **Navigation had to be wrapped in `startTransition`.** Switching to a lazy
+  view straight out of a click handler makes React suspend *synchronously* — it
+  logs `A component suspended while responding to synchronous input` and answers
+  by tearing the boundary down to the fallback, a visible flash of "Loading…"
+  even when the chunk is already cached. Caught in the browser console, not by
+  any test. `setTab`/`setPage` now wrap their updates; re-verified across
+  thirteen lazy destinations with a console marker to prove no new errors.
+- **`ExportReport` is mounted only while open.** It renders null when closed,
+  but it was mounted as soon as a chart existed — which would have pulled its
+  chunk on the critical path anyway.
+
+#### Original plan
 
 - 4.1 `React.lazy` the admin console — it is already behind a role check and a
   separate page state, so this is a near-free ~61KB.

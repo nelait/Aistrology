@@ -30,18 +30,61 @@ function rules(css: string): { selector: string; body: string }[] {
   return out;
 }
 
-/** The media block that lifts every form control to 16px on phones. */
-function phoneFontOverride(css: string): string | null {
-  const m = css.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\}\s*\}/);
-  return m ? m[1] : null;
+/** Bodies of every `@media (max-width: <px>)` block, brace-matched — there are
+ *  several at each breakpoint, so a regex that stops at the first `}}` finds
+ *  whichever happens to come first in the file. */
+function mediaBlocks(css: string, px: number): string[] {
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const open = new RegExp(`@media\\s*\\(\\s*max-width:\\s*${px}px\\s*\\)\\s*\\{`, "g");
+  const out: string[] = [];
+  for (const m of stripped.matchAll(open)) {
+    let i = m.index! + m[0].length;
+    let depth = 1;
+    while (i < stripped.length && depth > 0) {
+      if (stripped[i] === "{") depth++;
+      else if (stripped[i] === "}") depth--;
+      i++;
+    }
+    out.push(stripped.slice(m.index! + m[0].length, i - 1));
+  }
+  return out;
 }
 
+/** The declaration lifting every form control to 16px on phones, if present. */
+function phoneFontOverride(css: string): string | null {
+  return mediaBlocks(css, PHONE).find((b) =>
+    /input\s*,\s*select\s*,\s*textarea/.test(b) && /font-size:\s*16px\s*!important/.test(b),
+  ) ?? null;
+}
+
+/** The two canonical breakpoints. Adding a third is the thing to avoid. */
+const PHONE = 640;
+const TABLET = 900;
+
 describe("stylesheet — mobile guards", () => {
+  it("uses only the two canonical breakpoints", () => {
+    // Eleven ad-hoc values is how a change at 560 silently misses a component
+    // that breaks at 600. See docs/mobile-responsive.md (F7).
+    const used = [...CSS.matchAll(/@media\s*\(\s*max-width:\s*(\d+)px/g)]
+      .map((m) => Number(m[1]));
+    const stray = [...new Set(used)].filter((n) => n !== PHONE && n !== TABLET);
+    expect(stray, `breakpoints outside {${PHONE}, ${TABLET}}: ${stray.join(", ")}`)
+      .toEqual([]);
+  });
+
   it("lifts form controls to 16px at phone widths", () => {
-    const block = phoneFontOverride(CSS);
-    expect(block, "the ≤640px form-control override is missing").not.toBeNull();
-    expect(block).toMatch(/input\s*,\s*select\s*,\s*textarea/);
-    expect(block).toMatch(/font-size:\s*16px\s*!important/);
+    expect(phoneFontOverride(CSS), "the ≤640px form-control override is missing")
+      .not.toBeNull();
+  });
+
+  it("gives standalone controls a 44px touch target on phones", () => {
+    // Inline text links are exempt (WCAG 2.2 excludes inline targets), so this
+    // only asserts the button-shaped controls the audit measured at 31–37px.
+    const block = mediaBlocks(CSS, PHONE).find((b) => /min-height:\s*44px/.test(b));
+    expect(block, "no ≤640px block sets a 44px minimum").toBeDefined();
+    for (const cls of [".export-btn", ".nav-consult-btn", ".ff-btn", ".mini-btn"]) {
+      expect(block, `${cls} is not in the touch-target list`).toContain(cls);
+    }
   });
 
   it("no form control is left under 16px without that override", () => {
@@ -98,15 +141,13 @@ describe("stylesheet — mobile guards", () => {
     // 19 tabs wrapping at 375px was 575px tall — 71% of the viewport, above
     // every screen of content. The strip is what replaces it; if these rules
     // are lost the wall comes straight back, and jsdom cannot see that.
-    const phone = CSS.match(
-      /@media\s*\(\s*max-width:\s*720px\s*\)\s*\{([\s\S]*?)\n\}/,
-    )?.[1];
-    expect(phone, "the ≤720px block is missing").toBeDefined();
-    const tabs = rules(phone!).find((r) => r.selector === ".tabs")?.body ?? "";
+    const block = mediaBlocks(CSS, TABLET).find((b) => /\.tabs\s*\{/.test(b));
+    expect(block, `no ≤${TABLET}px block styles .tabs`).toBeDefined();
+    const tabs = rules(block!).find((r) => r.selector === ".tabs")?.body ?? "";
     expect(tabs).toMatch(/flex-wrap:\s*nowrap/);
     expect(tabs).toMatch(/overflow-x:\s*auto/);
     expect(tabs).toMatch(/position:\s*sticky/);
-    expect(phone).toMatch(/\.tab\s+\.tab-sub\s*\{\s*display:\s*none/);
+    expect(block).toMatch(/\.tab\s+\.tab-sub\s*\{\s*display:\s*none/);
   });
 
   it("the chart-settings toggle is phone-only", () => {

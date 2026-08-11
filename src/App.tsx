@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "./auth/AuthProvider";
 import { api } from "./api/client";
 import BirthForm from "./components/BirthForm";
 import ChatPanel from "./components/ChatPanel";
-import NotesView from "./components/NotesView";
 import { FeatureFeedback } from "./components/FeatureFeedback";
 import ProfileSwitcher from "./components/ProfileSwitcher";
 import LessonsDrawer from "./components/LessonsDrawer";
@@ -17,25 +16,8 @@ import EventsView from "./components/EventsView";
 import ForecastView from "./components/ForecastView";
 import RemediesView from "./components/RemediesView";
 import DoshasView from "./components/DoshasView";
-import MuhurtaView from "./components/MuhurtaView";
-import LearnView from "./components/LearnView";
 import AccountBar from "./components/AccountBar";
 import NotificationBell from "./components/NotificationBell";
-import AdminView from "./components/AdminView";
-import ExportReport from "./components/ExportReport";
-import MatchView from "./components/MatchView";
-import FriendshipView from "./components/FriendshipView";
-import PartnershipView from "./components/PartnershipView";
-import CareerView from "./components/CareerView";
-import HealthView from "./components/HealthView";
-import MentalHealthView from "./components/MentalHealthView";
-import VastuView from "./components/VastuView";
-import ConsultationView from "./components/ConsultationView";
-import PoojaServicesView from "./components/PoojaServicesView";
-import TempleAffiliationView from "./components/TempleAffiliationView";
-import RemindersView from "./components/RemindersView";
-import ContactView from "./components/ContactView";
-import BillingView from "./components/BillingView";
 import VargaHelp from "./components/VargaHelp";
 import VargaReadingPanel from "./components/VargaReadingPanel";
 import { VARGAS, VARGA_BY_CODE, Varga } from "./astro/varga";
@@ -47,6 +29,36 @@ import { useLlm } from "./llm/LlmProvider";
 import { computeChart } from "./astro/engine";
 import { BirthData, NodeType } from "./astro/types";
 import { formatTz } from "./utils/format";
+
+// The admin console is ~61KB of source behind a role check and its own page
+// state — a handful of accounts will ever render it, so it should not be in the
+// bundle every phone downloads. Same reasoning as the lessons drawer.
+const AdminView = lazy(() => import("./components/AdminView"));
+
+// Every destination that isn't the chart you land on. Each carries its own
+// engine module — matchmaking, vastu, mentalHealth — and none of it is needed
+// to render a kundli, which is what the overwhelming majority of visits do.
+// One <Suspense> wraps the tab area rather than one per view, so switching tab
+// shows a single line of text at worst.
+const MatchView = lazy(() => import("./components/MatchView"));
+const FriendshipView = lazy(() => import("./components/FriendshipView"));
+const PartnershipView = lazy(() => import("./components/PartnershipView"));
+const CareerView = lazy(() => import("./components/CareerView"));
+const HealthView = lazy(() => import("./components/HealthView"));
+const MentalHealthView = lazy(() => import("./components/MentalHealthView"));
+const VastuView = lazy(() => import("./components/VastuView"));
+const MuhurtaView = lazy(() => import("./components/MuhurtaView"));
+const PoojaServicesView = lazy(() => import("./components/PoojaServicesView"));
+const BillingView = lazy(() => import("./components/BillingView"));
+const NotesView = lazy(() => import("./components/NotesView"));
+const LearnView = lazy(() => import("./components/LearnView"));
+const ConsultationView = lazy(() => import("./components/ConsultationView"));
+const TempleAffiliationView = lazy(() => import("./components/TempleAffiliationView"));
+const RemindersView = lazy(() => import("./components/RemindersView"));
+const ContactView = lazy(() => import("./components/ContactView"));
+const ExportReport = lazy(() => import("./components/ExportReport"));
+
+type Page = "main" | "consult" | "admin" | "temple" | "reminders" | "contact";
 
 type Tab =
   | "chart"
@@ -96,7 +108,7 @@ const TABS: { id: Tab; label: string; sub: string }[] = [
 export default function App() {
   const [birth, setBirth] = useState<BirthData | null>(null);
   const [activeChartId, setActiveChartId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("chart");
+  const [tab, setTabNow] = useState<Tab>("chart");
   const [style, setStyle] = useState<"north" | "south">("north");
   const [mode, setMode] = useState<Varga>("D1");
   const [ayanamsa, setAyanamsa] = useState<Ayanamsa>("Lahiri");
@@ -119,9 +131,22 @@ export default function App() {
   const tabsRef = useRef<HTMLElement | null>(null);
   // Top-level pages. These are chart-independent, reachable from the header
   // and/or the home page.
-  const [page, setPage] = useState<"main" | "consult" | "admin" | "temple" | "reminders" | "contact">("main");
+  const [page, setPageNow] = useState<Page>("main");
   // Initial mode for the (astrology-independent) temple portal.
   const [templeMode, setTempleMode] = useState<"login" | "register">("login");
+
+  // Most destinations are lazy chunks (see the imports above). Switching to one
+  // straight out of a click handler makes React suspend *synchronously*, which
+  // it warns about and answers by tearing the whole boundary down to the
+  // fallback — a visible flash of "Loading…" even when the chunk is cached.
+  // Marking the navigation as a transition lets React keep the current view on
+  // screen until the new one is ready.
+  const setTab = useCallback((v: Tab | ((p: Tab) => Tab)) => {
+    startTransition(() => setTabNow(v));
+  }, []);
+  const setPage = useCallback((v: Page | ((p: Page) => Page)) => {
+    startTransition(() => setPageNow(v));
+  }, []);
 
   const chart = useMemo(
     () => (birth ? computeChart(birth, { ayanamsa, nodeType }) : null),
@@ -310,26 +335,36 @@ export default function App() {
 
       {page === "admin" && user?.role === "admin" ? (
         <main className="content admin-page">
-          <AdminView onExit={() => setPage("main")} />
+          <Suspense fallback={<p className="muted">Loading the admin console…</p>}>
+            <AdminView onExit={() => setPage("main")} />
+          </Suspense>
         </main>
       ) : page === "consult" && features.consultation ? (
         <main className="content consult-page">
           <button className="link back-link" onClick={() => setPage("main")}>
             ← Back to {chart ? "chart" : "home"}
           </button>
-          <ConsultationView />
+          <Suspense fallback={<p className="muted">Loading…</p>}>
+            <ConsultationView />
+          </Suspense>
         </main>
       ) : page === "temple" && features.temples ? (
         <main className="content temple-page">
-          <TempleAffiliationView initialMode={templeMode} onExit={() => setPage("main")} />
+          <Suspense fallback={<p className="muted">Loading…</p>}>
+            <TempleAffiliationView initialMode={templeMode} onExit={() => setPage("main")} />
+          </Suspense>
         </main>
       ) : page === "reminders" && user && features.reminders ? (
         <main className="content reminders-page">
-          <RemindersView onExit={() => setPage("main")} />
+          <Suspense fallback={<p className="muted">Loading…</p>}>
+            <RemindersView onExit={() => setPage("main")} />
+          </Suspense>
         </main>
       ) : page === "contact" ? (
         <main className="content contact-page">
-          <ContactView onExit={() => setPage("main")} />
+          <Suspense fallback={<p className="muted">Loading…</p>}>
+            <ContactView onExit={() => setPage("main")} />
+          </Suspense>
         </main>
       ) : !chart ? (
         <main className="landing">
@@ -746,6 +781,7 @@ export default function App() {
           </div>
 
           <main className="content">
+            <Suspense fallback={<p className="muted">Loading…</p>}>
             {tab === "chart" && (
               <div className="chart-tab">
                 <div className="chart-controls">
@@ -866,6 +902,8 @@ export default function App() {
             {/* One widget covers every module — the active tab is the feature key.
                 Signed-in only: the endpoint requires auth, so a guest would just
                 hit a 401 after taking the trouble to write a comment. */}
+            </Suspense>
+
             {user && <FeatureFeedback feature={tab} label={TABS.find((t) => t.id === tab)?.label} />}
           </main>
         </>
@@ -882,15 +920,19 @@ export default function App() {
         </p>
       </footer>
 
-      {chart && (
-        <ExportReport
-          chart={chart}
-          open={showExport}
-          onClose={() => setShowExport(false)}
-          style={style}
-          mode={mode}
-          locked={isFree}
-        />
+      {/* Mounted only while open — it renders null when closed anyway, and
+          gating the mount is what keeps its chunk off the critical path. */}
+      {chart && showExport && (
+        <Suspense fallback={null}>
+          <ExportReport
+            chart={chart}
+            open={showExport}
+            onClose={() => setShowExport(false)}
+            style={style}
+            mode={mode}
+            locked={isFree}
+          />
+        </Suspense>
       )}
 
       {page === "main" && (

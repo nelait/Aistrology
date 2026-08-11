@@ -173,6 +173,62 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Mobile responsiveness — Phases 3 & 4
+
+**Phase 3 — touch and breakpoints.**
+
+- **Zero controls under 44px** on any of the 20 tabs at 375px. The audit had
+  sampled one tab and found 10; sweeping all of them turned up more — sub-tabs
+  at 31px, antardasha rows at 40px, the Vastu selects at 37px, the plan buttons
+  at 36px. Inline text links are deliberately excluded: WCAG 2.2 "Target Size
+  (Minimum)" exempts inline targets, and padding them out would have added
+  ~26px to the header's birth-detail line to no end.
+- **The touch rules live at the end of the stylesheet on purpose.** Several
+  controls carry an earlier, more specific size (the header pills are pinned to
+  42px so they line up), and at equal specificity source order decides — in the
+  middle of the file the rule silently lost.
+- **Eleven breakpoints became two** (`640px` phone, `900px` tablet), documented
+  at the top of the stylesheet with the reason they can't be CSS variables (a
+  variable is invalid inside a media query without a PostCSS plugin this build
+  doesn't have). The migration is *directional*, not neutral: every value moved
+  outward, so content now collapses at a **wider** viewport than before, never a
+  narrower one — a direction that cannot introduce an overflow that wasn't
+  already there, which is what made it safe to do in bulk.
+- **Admin console swept at 375px**: the 14-section nav went from a **210px wall
+  to a 57px strip**, reusing the module-tab treatment. Verified by injecting the
+  real admin markup into the live page, since an admin session wasn't available
+  in the browser.
+- One deliberate behaviour change: the nav strip and settings disclosure moved
+  from 720px to the 900px token, so **iPad portrait (768px) gets them too** —
+  first content pixel there went 602px → 395px. That was the open question left
+  at the end of Phase 2.
+
+**Phase 4 — payload. Initial JS 749.56 kB → 372.86 kB; gzipped 219.38 kB →
+120.42 kB, a 45% cut.** Vite's 500 kB chunk warning is gone.
+
+- Beyond the admin console and lessons drawer the plan named, every secondary
+  destination is now its own chunk — the three match views, Career, Health,
+  Mental Health, Vastu, Muhurta, Pooja, Billing, Notes, Learn, Consultation,
+  the temple portal, Reminders, Contact and the export modal. None of it is
+  needed to render a kundli. One `<Suspense>` wraps the tab area, not one per
+  view.
+- **The lessons drawer had to be split in two.** Lazy-loading it wholesale would
+  have taken the handle off screen until the chunk arrived; the handle and the
+  open state stay eager in `LessonsDrawer`, and everything behind them moved to
+  the new `LessonsPanel`, which is the lazy boundary.
+- **Navigation is wrapped in `startTransition`.** Switching to a lazy view
+  straight out of a click handler makes React suspend *synchronously* — it logs
+  `A component suspended while responding to synchronous input` and answers by
+  tearing the boundary down to the fallback, flashing "Loading…" even when the
+  chunk is cached. Found in the browser console, not by any test; re-verified
+  across thirteen lazy destinations with a console marker proving no new errors.
+- **`ExportReport` mounts only while open.** It renders null when closed, but it
+  was mounted as soon as a chart existed, which would have pulled its chunk onto
+  the critical path regardless.
+- Files: `src/App.tsx`, `src/components/LessonsDrawer.tsx` (rewritten),
+  `src/components/LessonsPanel.tsx` (new), `src/styles.css`,
+  `src/styles.mobile.test.ts`, `docs/mobile-responsive.md`.
+
 ## Mobile responsiveness — Phase 2
 
 Reclaiming the screen: on a 375×812 phone the first pixel of content sat at
