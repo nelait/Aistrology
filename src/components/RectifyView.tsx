@@ -78,6 +78,17 @@ function Heatmap({ result }: { result: RectifyResult }) {
   const span = result.searchTo - result.searchFrom;
   const pos = (m: number) => ((m - result.searchFrom) / span) * 100;
 
+  // Hour ticks across whatever span was searched — the whole day, or just the
+  // "morning" band if that was the constraint. Aim for at most nine labels and
+  // snap to a round interval, so the marks land on 03:00 rather than 02:53.
+  const interval = [30, 60, 120, 180, 360].find((iv) => span / iv <= 9) ?? 720;
+  const ticks: number[] = [];
+  for (let m = Math.ceil(result.searchFrom / interval) * interval; m <= result.searchTo; m += interval) {
+    ticks.push(m);
+  }
+
+  const best = result.windows[0];
+
   return (
     <div className="rx-heat" role="img" aria-label="Score across the searched span">
       <div className="rx-bars">
@@ -93,6 +104,10 @@ function Heatmap({ result }: { result: RectifyResult }) {
           );
         })}
       </div>
+      {ticks.map((m) => (
+        <span key={`t${m}`} className="rx-tick" style={{ left: `${pos(m)}%` }} />
+      ))}
+
       {result.windows.slice(0, 3).map((w, i) => (
         <span
           key={i}
@@ -105,6 +120,48 @@ function Heatmap({ result }: { result: RectifyResult }) {
           }}
           title={`${formatMinute(w.startMinute)} – ${formatMinute(w.endMinute % 1440)}`}
         />
+      ))}
+
+      {/* The range written on the chart, not only in the list below it — a
+          16-minute band on a 24-hour axis is a hairline, and reading it off the
+          ticks alone is guesswork. Nudged to whichever side has room. */}
+      {best && (
+        <span
+          // Centred normally, but hung to one side near either edge — the pill
+          // is ~95px and the strip is clipped, so a window at 03:00 or 23:00
+          // would otherwise have its own label cut in half.
+          className={
+            "rx-flag" +
+            (pos(best.startMinute) > 62 ? " left" : pos(best.endMinute) < 16 ? " right" : "")
+          }
+          style={{ left: `${pos((best.startMinute + best.endMinute) / 2)}%` }}
+        >
+          {formatMinute(best.startMinute)}–{formatMinute(best.endMinute % 1440)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Clock labels under the strip, at the same positions as the ticks. */
+function Axis({ result }: { result: RectifyResult }) {
+  const span = result.searchTo - result.searchFrom;
+  const interval = [30, 60, 120, 180, 360].find((iv) => span / iv <= 9) ?? 720;
+  const ticks: number[] = [];
+  for (let m = Math.ceil(result.searchFrom / interval) * interval; m <= result.searchTo; m += interval) {
+    ticks.push(m);
+  }
+  return (
+    <div className="rx-axis muted small">
+      {ticks.map((m, i) => (
+        <span
+          key={m}
+          // Every other label is dropped on a phone, where nine of them overlap.
+          className={i % 2 === 1 ? "rx-tick-label alt" : "rx-tick-label"}
+          style={{ left: `${((m - result.searchFrom) / span) * 100}%` }}
+        >
+          {m >= 1440 ? "24:00" : formatMinute(m)}
+        </span>
       ))}
     </div>
   );
@@ -210,11 +267,7 @@ export default function RectifyView({ chart, events }: Props) {
           </div>
 
           <Heatmap result={result} />
-          <div className="rx-axis muted small">
-            <span>{formatMinute(result.searchFrom)}</span>
-            <span>{formatMinute(Math.floor((result.searchFrom + result.searchTo) / 2))}</span>
-            <span>{result.searchTo >= 1440 ? "24:00" : formatMinute(result.searchTo)}</span>
-          </div>
+          <Axis result={result} />
 
           {verdictFor(result) !== "inconclusive" && (
             <>

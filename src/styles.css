@@ -2756,7 +2756,24 @@ body {
   pointer-events: none;
 }
 .rx-mark.best { background: rgba(245, 197, 66, 0.28); box-shadow: 0 0 14px rgba(245, 197, 66, 0.45); }
-.rx-axis { display: flex; justify-content: space-between; margin: 6px 2px 18px; }
+
+/* Hour marks behind the bars, so a bar can be read against a clock time. */
+.rx-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border); opacity: 0.55; pointer-events: none; }
+
+/* The winning range, written on the chart itself. */
+.rx-flag {
+  position: absolute; top: 6px; transform: translateX(-50%);
+  background: var(--gold); color: #2a1400;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.2px; white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px; pointer-events: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+/* Near either edge the pill would be clipped — hang it inward instead. */
+.rx-flag.left { transform: translateX(-100%) translateX(-6px); }
+.rx-flag.right { transform: translateX(6px); }
+
+.rx-axis { position: relative; height: 18px; margin: 6px 0 18px; }
+.rx-tick-label { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 
 .rx-windows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
 .rx-window {
@@ -2780,6 +2797,8 @@ body {
 @media (max-width: 640px) {
   .rx-controls label { min-width: 0; flex-basis: 100%; }
   .rx-heat { height: 90px; }
+  /* Nine clock labels collide at phone width; show every other one. */
+  .rx-tick-label.alt { display: none; }
 }
 
 /* Touch targets. 44px is Apple's HIG minimum (Material asks 48); the audit
