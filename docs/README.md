@@ -19,9 +19,14 @@ Guides for the features and operations of the Aistrology app.
   tracks in a slide-out drawer, with progress and live chart links.
 - [Feature Feedback](feedback.md) — the per-module "Was this helpful?" widget
   and the admin view that ranks features by how users rate them.
+- [Life events & rectification](life-events.md) — **usage guide**: reporting
+  dated life events, reading what the chart says about them, and searching for
+  an unknown birth time.
 - [Rectification & event analysis](rectification-and-event-analysis.md) — the
-  shipped event-analysis feature (Events → Your life events), and the research
-  and plan for deriving an unknown birth time from dated events.
+  **research** behind that feature: what was measured, what was rejected, the
+  null arms, and the honest limits. Worth reading before trusting the numbers.
+- [Divisional charts & Ashtakavarga](divisional-charts.md) — the twelve vargas
+  the engine computes and the classical points system for judging transits.
 - [Consultations](consultations.md) — provider offers, bookings, and approvals.
 - [Reminders](reminders.md) — personal & festival reminders and the scheduler.
 - [Rate Limiting](rate-limiting.md) — per-plan daily quotas and the global limiter.

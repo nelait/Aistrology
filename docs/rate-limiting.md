@@ -49,6 +49,17 @@ paid-gated (free users get a small daily allowance as an upgrade hook):
 A `429` returns the remaining quota; the chat panel turns a free-user `429` into
 an upgrade prompt. See [Astro Chat](astro-chat.md).
 
+## Event narration
+
+The **✦ Explain this in plain words** button on a life event does not have a
+quota of its own — it reuses `/api/llm/justify/stream` outright, so it draws on
+the **Justify (streaming)** allowance above and inherits its Pro/Premium gate.
+Free users are not shown the button rather than being given one that always
+returns 403. See [Life events](life-events.md).
+
+The rectification scan itself is **not** quota'd: it runs entirely in the
+browser and costs the server nothing. Nor is storing life events.
+
 ## Feature Feedback
 
 The per-module "Was this helpful?" widget writes to a quota too, so a bored user

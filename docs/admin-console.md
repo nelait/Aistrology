@@ -41,7 +41,8 @@ ADMIN_ACCESS_CODE=$(openssl rand -base64 12)
    **Enter admin console**.
 5. You're in — the console's left rail lists every section: **Overview**,
    **Usage & Limits**, **Users**, **Approvals**, **Temples**, **Reminders**,
-   **Promo Codes**, **Contact**, **Feedback**, **Billing**, **Notifications**, **AI / LLM**,
+   **Promo Codes**, **Contact**, **Feedback**, **Rectifier accuracy**, **Billing**,
+   **Notifications**, **AI / LLM**,
    and **Features**.
 
 ## Leaving the console
@@ -61,6 +62,7 @@ ADMIN_ACCESS_CODE=$(openssl rand -base64 12)
 | **Approvals**     | Approve or reject consultation provider offers (new offers arrive as `pending`).               |
 | **Contact**       | Read messages sent through the Contact-us form; mark them read / resolved.                      |
 | **Feedback**      | Per-feature 👍/👎 ratings and comments, ranked worst-first; triage new → read → actioned. See [Feature Feedback](feedback.md). |
+| **Rectifier accuracy** | Opt-in reports from users who already knew their birth time and ran the search without it — the only real accuracy evidence the rectifier has. **Aggregates only**: reports, % inside window, median error, % within 30 min and 2 h, split by verdict. Individual reports are never exposed, and carry no birth time, date, place or events. The row to watch is `inconclusive`: those are the runs the feature declined to answer, and if their error is no worse than the confident rows then the confidence signal is not working. See [Life events](life-events.md). |
 | **Billing**       | Read-only audit trail of refunds & disputes from Stripe (see [Refunds & disputes](promos-and-payments.md#refunds--disputes)). The app never issues refunds; disputes auto-revoke the user's plan. |
 | **Notifications** | Broadcast to all users or target specific ones (info / success / warning).                      |
 | **AI / LLM**      | Configure the global provider key **and pick the _Active engine_** (Off / Demo / a provider). All AI features — Justify, Translate, Vastu and **Astro Chat** — run on this config, and their UI is hidden while the engine is `Off`. See [Astro Chat § Enabling](astro-chat.md#enabling--operating). |

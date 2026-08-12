@@ -173,6 +173,31 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Documentation pass over the recent work
+
+- **[Life events & rectification](life-events.md)** — new. The *usage* guide the
+  feature lacked: what the three Events sub-tabs do, why events belong to a
+  profile rather than to the logged-in user, what each field is for, how to read
+  a reading, and what the birth-time search will and will not tell you. The
+  existing [research doc](rectification-and-event-analysis.md) stays as the
+  *why* — what was measured, what was rejected, where the limits are — and the
+  two now cross-link rather than overlap.
+- **[Divisional charts & Ashtakavarga](divisional-charts.md)** — new. The twelve
+  vargas the engine computes, which seven are shown and why the other five are
+  not, the two that behave unlike the rest (D30 is unequally divided and never
+  returns a luminary's sign; D60 changes every two minutes), and the
+  Ashtakavarga tables with the 337-point identity that proves them.
+- **[Admin console](admin-console.md)** — documents the new *Rectifier accuracy*
+  section, including that it is aggregates-only and which row actually matters.
+- **[Rate limiting](rate-limiting.md)** — records that event narration has no
+  quota of its own but draws on the Justify (streaming) allowance, and that the
+  rectification scan is not quota'd at all because it runs in the browser.
+- Every internal link and heading anchor across all 21 docs was checked
+  programmatically. Worth noting the near-miss: the first checker collapsed runs
+  of whitespace when generating anchors, which GitHub does not, and it reported
+  three *correct* links as broken. Verifying the checker before acting on it
+  avoided "fixing" three working links.
+
 ## Opt-in accuracy reports for the birth-time rectifier
 
 Phase F, the last of [rectification & event analysis](rectification-and-event-analysis.md),
