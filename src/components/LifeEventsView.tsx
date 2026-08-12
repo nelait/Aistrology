@@ -18,6 +18,10 @@ import {
   LifeEventInput,
 } from "../astro/eventAnalysis";
 import { ordinal } from "../astro/interpret";
+import { buildEventNarrativeRequest } from "../astro/eventNarrative";
+import { useLlm } from "../llm/LlmProvider";
+import { useAuth } from "../auth/AuthProvider";
+import { useLanguage } from "../i18n/LanguageProvider";
 
 interface Props {
   chart: Chart;
@@ -68,6 +72,14 @@ export default function LifeEventsView({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
+  const { enabled: llmEnabled } = useLlm();
+  const { language } = useLanguage();
+  const { user } = useAuth();
+  // Same gate as Justify: the endpoint is paid-only, so showing the button to a
+  // free user would just be a button that always returns 403.
+  const canNarrate = llmEnabled && (user?.plan ?? "free") !== "free";
+  // Narration per event id: the prose, whether it is still streaming, any error.
+  const [narrative, setNarrative] = useState<Record<string, { text: string; streaming: boolean; error?: string }>>({});
 
   // New-event form
   const [type, setType] = useState<EventTypeId>("marriage");
@@ -141,6 +153,29 @@ export default function LifeEventsView({
       setError(err instanceof Error ? err.message : "Could not save that event");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function narrate(id: string, a: EventAnalysis) {
+    setNarrative((n) => ({ ...n, [id]: { text: "", streaming: true } }));
+    const req = buildEventNarrativeRequest(a);
+    try {
+      await api.justifyStream(
+        { ...req, language: language.code === "en" ? undefined : language.english },
+        {
+          onDelta: (t) =>
+            setNarrative((n) => ({ ...n, [id]: { text: (n[id]?.text ?? "") + t, streaming: true } })),
+          onDone: () =>
+            setNarrative((n) => ({ ...n, [id]: { text: n[id]?.text ?? "", streaming: false } })),
+          onError: (m) =>
+            setNarrative((n) => ({ ...n, [id]: { text: n[id]?.text ?? "", streaming: false, error: m } })),
+        },
+      );
+    } catch (e) {
+      setNarrative((n) => ({
+        ...n,
+        [id]: { text: n[id]?.text ?? "", streaming: false, error: e instanceof Error ? e.message : "Failed" },
+      }));
     }
   }
 
@@ -296,6 +331,34 @@ export default function LifeEventsView({
                     )}
 
                     {a.vargaNote && <p className="muted small le-varga">{a.vargaNote}</p>}
+
+                    {/* Narration is an optional layer over the findings above,
+                        never a replacement for them: with the AI engine off the
+                        reasons, citations and percentile are all still here. */}
+                    {canNarrate && (
+                      <div className="le-narrate">
+                        {!narrative[id] ? (
+                          <button className="mini-btn" onClick={() => narrate(id, a)}>
+                            ✦ Explain this in plain words
+                          </button>
+                        ) : (
+                          <>
+                            <p className="le-narrative">
+                              {narrative[id].text}
+                              {narrative[id].streaming && <span className="le-caret-blink">▌</span>}
+                            </p>
+                            {narrative[id].error && (
+                              <p className="error small">{narrative[id].error}</p>
+                            )}
+                            {!narrative[id].streaming && (
+                              <button className="mini-btn" onClick={() => narrate(id, a)}>
+                                ↻ Rewrite
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
 
                     <div className="le-item-foot">
                       {row?.note && <span className="muted small">“{row.note}”</span>}

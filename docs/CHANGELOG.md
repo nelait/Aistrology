@@ -173,6 +173,40 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Plain-words explanations for life events
+
+Phase E of [rectification & event analysis](rectification-and-event-analysis.md).
+An **✦ Explain this in plain words** button on each event turns the computed
+findings into prose, streamed.
+
+- **No new endpoint.** It maps the analysis onto the existing
+  `/api/llm/justify/stream`, whose contract is already "explain these supplied
+  facts, cite only these supplied sources, invent nothing". It inherits the
+  paid-plan gate and the `justify_stream` quota; free users do not see the
+  button, since it would only ever return a 403.
+- **The model narrates, it does not analyse.** Everything it may say is computed
+  first. Turning the AI engine off costs the prose and nothing else — reasons,
+  citations and percentile are all still there.
+- **Reviewing real output changed the design.** The shared system prompt asks
+  for "an enhanced, personalised prediction", which is right for Justify and
+  wrong here: a 44th-percentile event — chance — came back promising "strong
+  potential for intellectual growth and achievement". Two guidelines fixed it,
+  one saying the event has already happened so nothing may be forecast, and one
+  per band capping how confident the prose may sound. The same event now opens
+  *"only weakly supported by the chart, with a score of 44% against random
+  dates"* and closes *"the chart does not particularly account for it"*.
+- **Counter-indications are passed in as facts** and the model is told to state
+  them. On that weak reading it named both the running Sade Sati and the missing
+  D24 lagna lord rather than smoothing them away.
+- The tone rule is not decoration — these readings cover bereavement, illness
+  and accidents, so a guideline forbids ever saying the chart *caused* an event.
+- 9 new tests over the request builder: every reason reaches the facts, the
+  percentile carries through with its "near 50 means nothing" caveat, dissent is
+  never dropped, sources do not duplicate, and the anti-invention and
+  anti-causation guidelines are present. 410 pass.
+- Files: `src/astro/eventNarrative.ts` (+ `.test.ts`),
+  `src/components/LifeEventsView.tsx`, `src/styles.css`.
+
 ## Birth-time rectification
 
 Phase D of [rectification & event analysis](rectification-and-event-analysis.md).

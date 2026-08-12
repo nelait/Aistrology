@@ -1,9 +1,8 @@
 # Birth-Time Rectification & Event Analysis — Research and Plan
 
-Status: **Phases A–D shipped.** Rectification is live under
-**Events → Unknown birth time**, using the layers Phase B measured and the
-engine Phase C added. Phases E (LLM narration) and F (opt-in accuracy
-collection) are not started.
+Status: **Phases A–E shipped.** Event analysis, the ablation study, the engine
+work it called for, rectification, and the LLM narration over the deterministic
+findings. Phase F (opt-in accuracy collection) is not started.
 
 Two features were asked for:
 
@@ -454,6 +453,34 @@ plateaus routinely sat 11 minutes from the truth. Windows are widened to
 exceed it), and the raw plateau is kept alongside for reference. After the
 change the true time fell inside the reported window in every test case.
 
+### Phase E — narration
+
+`src/astro/eventNarrative.ts` maps a computed `EventAnalysis` into a request for
+the **existing** `/api/llm/justify/stream` endpoint. No new endpoint, no new
+quota, no new client plumbing: that endpoint's contract is already "explain
+these supplied facts, cite only these supplied sources, invent nothing", which
+is exactly the requirement. It inherits the paid-plan gate and the
+`justify_stream` daily quota.
+
+Every claim the model is permitted to make has already been computed. Turning
+the AI engine off costs the prose and nothing else — the reasons, the citations
+and the percentile are all still on screen, because the model never produced
+them.
+
+**What reviewing the output changed.** The shared system prompt asks for "an
+enhanced, personalised prediction" in the second paragraph, which is right for
+Justify and wrong here. Left alone, a 44th-percentile event — chance, in other
+words — came back promising "a strong potential for intellectual growth and
+achievement". Two guidelines fixed it: the event has already happened so nothing
+may be forecast, and a band-specific instruction on how confident the prose is
+allowed to sound. The same event now opens "only weakly supported by the chart,
+with a score of 44% against random dates" and closes "the chart does not
+particularly account for it".
+
+Counter-indications are passed in as facts and the model is told to state them.
+On that weak reading it named both: the running Sade Sati, and the D24 lagna
+lord being absent from the dasha lords.
+
 ### The honest ceiling
 
 | Claim | Defensible? |
@@ -566,7 +593,7 @@ the error and not the events, and is a Phase F item.
 | **B** ✅ | Ablation harness (`npm run ablation`) + identifiability study | Settled which layers Phase D should use, and bounded what it may claim |
 | **C** ✅ | Fixed the dasha anchor; added Ashtakavarga, D4, D16, D24, D30 and D60 | Accuracy prerequisites for fine resolution |
 | **D** ✅ | Rectification scan, heatmap, confidence UI | The headline feature, on a scorer that has been tested. The retrodiction loop is the one piece not built. |
-| **E** | LLM narration over the deterministic reasons | Reuses the *Justify* pattern and its quota |
+| **E** ✅ | LLM narration over the deterministic reasons | Reuses the *Justify* endpoint, prompt contract and quota outright |
 | **F** | Opt-in accuracy collection from users who know their birth time | The only licence-clean route to real ground truth |
 
 Phases A and B together are the honest minimum before showing anyone a
