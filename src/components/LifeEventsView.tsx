@@ -106,7 +106,30 @@ export default function LifeEventsView({
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
-    if (!chartId || !date) return;
+    if (!chartId) return;
+
+    // Validated here rather than by the browser. With native validation the
+    // form simply refuses to submit when the date is out of range, so `add`
+    // never ran, no error was ever set, and pressing "Add event" did nothing
+    // visible at all — which reads as the feature silently dropping entries.
+    if (!date) {
+      setError("Pick a date for the event.");
+      return;
+    }
+    const when = new Date(`${date}T00:00:00Z`);
+    if (Number.isNaN(when.getTime())) {
+      setError("That date is not valid.");
+      return;
+    }
+    if (when.getTime() > Date.now() + 86_400_000) {
+      setError("That date is in the future — events have to have happened already.");
+      return;
+    }
+    if (when.getUTCFullYear() < 1800) {
+      setError("That date is too far in the past.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
@@ -163,7 +186,10 @@ export default function LifeEventsView({
         about that date.
       </p>
 
-      <form className="le-form" onSubmit={add}>
+      {/* noValidate: the browser's own constraint checking blocks submit before
+          our handler runs, which left a failed add with no explanation. All of
+          it is checked in `add` instead, where the message can be shown. */}
+      <form className="le-form" onSubmit={add} noValidate>
         <div className="le-form-grid">
           <label>
             <span className="muted small">What happened</span>
@@ -175,7 +201,9 @@ export default function LifeEventsView({
           </label>
           <label>
             <span className="muted small">When</span>
-            <input type="date" value={date} required max={new Date().toISOString().slice(0, 10)}
+            {/* `max` still constrains the calendar picker; it no longer blocks
+                submit, so a typed-in date gets a real message instead. */}
+            <input type="date" value={date} max={new Date().toISOString().slice(0, 10)}
               onChange={(e) => setDate(e.target.value)} />
           </label>
           <label>
@@ -200,7 +228,7 @@ export default function LifeEventsView({
           <input className="le-note" type="text" maxLength={500} value={note}
             placeholder="A note for yourself (optional) — not used in the reading"
             onChange={(e) => setNote(e.target.value)} />
-          <button className="primary" type="submit" disabled={busy || !date}>
+          <button className="primary" type="submit" disabled={busy}>
             {busy ? "Saving…" : "Add event"}
           </button>
         </div>
