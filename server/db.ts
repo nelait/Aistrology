@@ -389,6 +389,32 @@ export async function initDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_life_events_user_chart
       ON life_events(user_id, chart_id, event_date ASC);
 
+    -- Opt-in accuracy reports for birth-time rectification. The only
+    -- licence-clean route to real ground truth: users who already know their
+    -- birth time run the search with it hidden and choose to contribute the
+    -- outcome. See docs/rectification-and-event-analysis.md Part 5.
+    --
+    -- What is deliberately NOT here: the birth time, the birth date, the place,
+    -- and the events. Only how far off the search was and enough shape to make
+    -- the number analysable. user_id is kept solely so the row disappears with
+    -- the account, and is never shown.
+    CREATE TABLE IF NOT EXISTS rectification_accuracy (
+      id             UUID PRIMARY KEY,
+      user_id        UUID REFERENCES users(id) ON DELETE CASCADE,
+      error_minutes  INTEGER NOT NULL,
+      inside_window  BOOLEAN NOT NULL,
+      window_minutes INTEGER NOT NULL,
+      verdict        TEXT NOT NULL,
+      separation_z   REAL,
+      event_count    INTEGER NOT NULL,
+      precision_mix  TEXT NOT NULL DEFAULT '',
+      time_of_day    TEXT NOT NULL DEFAULT 'unknown',
+      birth_decade   INTEGER,
+      created_at     BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rect_acc_created
+      ON rectification_accuracy(created_at DESC);
+
     -- Per-feature user feedback ("was this helpful?"), surfaced in the admin
     -- console. Append-only: repeat submissions are separate rows so the comment
     -- history is preserved. user_id survives account deletion as NULL so the
@@ -1687,6 +1713,69 @@ export async function countLifeEvents(userId: string, chartId: string): Promise<
     [userId, chartId],
   );
   return Number(rows[0]?.n ?? 0);
+}
+
+// ── Rectification accuracy (opt-in) ──────────────────────────────────────
+
+export interface AccuracyReport {
+  errorMinutes: number;
+  insideWindow: boolean;
+  windowMinutes: number;
+  verdict: string;
+  separationZ: number | null;
+  eventCount: number;
+  precisionMix: string;
+  timeOfDay: string;
+  birthDecade: number | null;
+}
+
+export async function recordAccuracy(userId: string, r: AccuracyReport): Promise<void> {
+  await pool.query(
+    `INSERT INTO rectification_accuracy
+       (id, user_id, error_minutes, inside_window, window_minutes, verdict,
+        separation_z, event_count, precision_mix, time_of_day, birth_decade, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [randomUUID(), userId, r.errorMinutes, r.insideWindow, r.windowMinutes, r.verdict,
+     r.separationZ, r.eventCount, r.precisionMix, r.timeOfDay, r.birthDecade, Date.now()],
+  );
+}
+
+export interface AccuracyStats {
+  total: number;
+  insideWindow: number;
+  medianErrorMinutes: number | null;
+  within30: number;
+  within120: number;
+  byVerdict: Array<{ verdict: string; n: number; inside: number; medianError: number | null }>;
+}
+
+/** Aggregate only — individual rows are never exposed, even to an admin. */
+export async function accuracyStats(): Promise<AccuracyStats> {
+  const { rows } = await pool.query<{ error_minutes: number; inside_window: boolean; verdict: string }>(
+    "SELECT error_minutes, inside_window, verdict FROM rectification_accuracy",
+  );
+  const median = (xs: number[]) =>
+    xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : null;
+
+  const errs = rows.map((r) => Number(r.error_minutes));
+  const verdicts = [...new Set(rows.map((r) => r.verdict))];
+
+  return {
+    total: rows.length,
+    insideWindow: rows.filter((r) => r.inside_window).length,
+    medianErrorMinutes: median(errs),
+    within30: errs.filter((e) => e <= 30).length,
+    within120: errs.filter((e) => e <= 120).length,
+    byVerdict: verdicts.map((v) => {
+      const sub = rows.filter((r) => r.verdict === v);
+      return {
+        verdict: v,
+        n: sub.length,
+        inside: sub.filter((r) => r.inside_window).length,
+        medianError: median(sub.map((r) => Number(r.error_minutes))),
+      };
+    }).sort((a, b) => b.n - a.n),
+  };
 }
 
 // ── Feature feedback ─────────────────────────────────────────────────────

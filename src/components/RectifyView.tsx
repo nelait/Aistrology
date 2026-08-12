@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Chart } from "../astro/types";
-import { ApiLifeEvent } from "../api/client";
+import { api, ApiLifeEvent } from "../api/client";
 import {
   EVENT_KARAKA_BY_ID,
   EventTypeId,
@@ -167,11 +167,133 @@ function Axis({ result }: { result: RectifyResult }) {
   );
 }
 
+type Contribution = "no" | "sending" | "yes" | "declined" | "failed";
+
+/** Circular distance between two minutes-of-day. */
+function circularError(a: number, b: number): number {
+  const raw = Math.abs(a - b);
+  return Math.min(raw, 1440 - raw);
+}
+
+/**
+ * The hold-out check, and the one honest route to a real accuracy figure.
+ *
+ * A user who already knows their birth time has just watched the search run
+ * without it. Comparing the two is a genuine held-out test — and unlike every
+ * other validation route considered (see docs/rectification-and-event-analysis.md
+ * Part 5) it needs no licensed data, because it is their own.
+ *
+ * The result is shown first and the contribution asked for second, so opting in
+ * is never a blind act. What leaves the browser is the error and the shape of
+ * the run — never the birth time, the date, the place or the events.
+ */
+function AccuracyCheck({
+  result, chart, inputs, timeOfDay, checked, onCheck, contributed, setContributed,
+}: {
+  result: RectifyResult;
+  chart: Chart;
+  inputs: LifeEventInput[];
+  timeOfDay: TimeOfDay;
+  checked: boolean;
+  onCheck: () => void;
+  contributed: Contribution;
+  setContributed: (v: Contribution) => void;
+}) {
+  const best = result.windows[0];
+  if (!best) return null;
+
+  const trueMinute = chart.birth.hour * 60 + chart.birth.minute;
+  const centre = Math.floor((best.startMinute + best.endMinute) / 2);
+  const error = circularError(centre, trueMinute);
+  const inside = trueMinute >= best.startMinute && trueMinute < best.endMinute;
+
+  async function contribute() {
+    setContributed("sending");
+    try {
+      const mix: Record<string, number> = {};
+      for (const e of inputs) mix[e.precision] = (mix[e.precision] ?? 0) + 1;
+      await api.contributeAccuracy({
+        errorMinutes: error,
+        insideWindow: inside,
+        windowMinutes: best.widthMinutes,
+        verdict: verdictFor(result),
+        separationZ: result.separationZ,
+        eventCount: inputs.length,
+        precisionMix: Object.entries(mix).map(([k, v]) => `${k}:${v}`).join(","),
+        timeOfDay,
+        // The decade, not the year — enough to spot an era effect, not enough
+        // to help identify anybody.
+        birthDecade: Math.floor(chart.birth.year / 10) * 10,
+      });
+      setContributed("yes");
+    } catch {
+      setContributed("failed");
+    }
+  }
+
+  return (
+    <div className="rx-accuracy">
+      {!checked ? (
+        <>
+          <strong className="small">Do you already know this birth time?</strong>
+          <p className="muted small">
+            If the time on this profile is one you trust, the search just ran without using
+            it — so we can show you how close it came. That is a real test, and it is the
+            only kind this method can honestly be given.
+          </p>
+          <button className="mini-btn" onClick={onCheck}>Show me how close it got</button>
+        </>
+      ) : (
+        <>
+          <p className={inside ? "rx-acc-hit" : "rx-acc-miss"}>
+            {inside ? "✓ Inside the window." : "✗ Outside the window."}{" "}
+            Recorded time <strong>{formatMinute(trueMinute)}</strong>, window centre{" "}
+            <strong>{formatMinute(centre)}</strong> — out by{" "}
+            <strong>{error} minute{error === 1 ? "" : "s"}</strong>.
+          </p>
+
+          {contributed === "yes" ? (
+            <p className="muted small">
+              Recorded — thank you. That is one more data point towards an accuracy figure
+              this feature can actually stand behind.
+            </p>
+          ) : contributed === "declined" ? (
+            <p className="muted small">Nothing was sent. The comparison above is yours alone.</p>
+          ) : (
+            <>
+              <p className="muted small">
+                May we keep this result? It would be stored as: the {error}-minute error, the
+                window width, the verdict, how many events you used and how well dated they
+                were, and your birth <em>decade</em>. <strong>Not</strong> your birth time,
+                date, place, or any of your events. It is the only way this method can ever
+                lose its “unvalidated” label.
+              </p>
+              <div className="rx-acc-actions">
+                <button className="mini-btn ok" disabled={contributed === "sending"} onClick={contribute}>
+                  {contributed === "sending" ? "Sending…" : "Yes, contribute this result"}
+                </button>
+                <button className="mini-btn" onClick={() => setContributed("declined")}>No thanks</button>
+              </div>
+              {contributed === "failed" && (
+                <p className="error small">Could not record that — nothing was sent.</p>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function RectifyView({ chart, events }: Props) {
   const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>("unknown");
   const [result, setResult] = useState<RectifyResult | null>(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
+  // Accuracy check: revealed only when the user says they know the real time,
+  // and contributed only when they then choose to.
+  const [checked, setChecked] = useState(false);
+  const [contributed, setContributed] = useState<Contribution>("no");
 
   const inputs = useMemo<LifeEventInput[]>(
     () =>
@@ -200,6 +322,8 @@ export default function RectifyView({ chart, events }: Props) {
     // a full SECOND in a background one, which turned a 400ms scan into
     // eighteen seconds when the tab lost focus. A message port is not throttled
     // that way. (It is the same reason React's own scheduler uses one.)
+    setChecked(false);
+    setContributed("no");
     const it = rectifySteps(chart.birth, inputs, { timeOfDay });
     const channel = new MessageChannel();
     const pump = () => {
@@ -319,6 +443,17 @@ export default function RectifyView({ chart, events }: Props) {
               </p>
             )}
           </div>
+
+          <AccuracyCheck
+            result={result}
+            chart={chart}
+            inputs={inputs}
+            timeOfDay={timeOfDay}
+            checked={checked}
+            onCheck={() => setChecked(true)}
+            contributed={contributed}
+            setContributed={setContributed}
+          />
 
           <p className="muted small rx-stats">
             Peak stands {result.separation.toFixed(1)} standard deviations above the day&apos;s

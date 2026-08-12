@@ -2801,6 +2801,17 @@ body {
 .rx-fits li.dissents .rx-fit-mark { color: var(--red); }
 .rx-stats { line-height: 1.6; margin: 0; }
 
+.rx-accuracy {
+  border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 10px; padding: 12px 14px; margin: 0 0 14px; background: var(--panel);
+}
+.rx-accuracy strong { color: var(--accent); }
+.rx-accuracy p { margin: 8px 0; line-height: 1.6; }
+.rx-acc-hit { font-size: 14px; color: var(--green); }
+.rx-acc-miss { font-size: 14px; color: var(--saffron-soft); }
+.rx-acc-hit strong, .rx-acc-miss strong { color: inherit; }
+.rx-acc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+
 @media (max-width: 640px) {
   .rx-controls label { min-width: 0; flex-basis: 100%; }
   .rx-heat { height: 90px; }

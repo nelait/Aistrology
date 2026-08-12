@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import {
   getChart,
+  recordAccuracy,
   listLifeEvents,
   createLifeEvent,
   updateLifeEvent,
@@ -123,6 +124,59 @@ lifeEventsRouter.put("/:id", async (req: Request, res: Response) => {
   const updated = await updateLifeEvent(uid(req), req.params.id, parsed.fields);
   if (!updated) { res.status(404).json({ error: "Event not found" }); return; }
   res.json({ event: apiEvent(updated) });
+});
+
+const VERDICTS = new Set(["narrow", "indicative", "weak", "inconclusive"]);
+
+/**
+ * POST /api/life-events/accuracy — an opt-in report of how close the birth-time
+ * search came, from a user who already knew the answer.
+ *
+ * Everything identifying is left on the client on purpose. No birth time, no
+ * date, no place, no events: just how far off the search was, and enough shape
+ * (how many events, how well dated, which verdict) to make the number mean
+ * something. The bounds below are what stops a crafted request poisoning the
+ * only real accuracy figure this project will ever have.
+ */
+lifeEventsRouter.post("/accuracy", async (req: Request, res: Response) => {
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const int = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : NaN);
+
+  const errorMinutes = int(b.errorMinutes);
+  const windowMinutes = int(b.windowMinutes);
+  const eventCount = int(b.eventCount);
+  const verdict = String(b.verdict ?? "");
+
+  // A birth time is a point on a 24-hour circle, so the furthest anything can
+  // be from anything else is twelve hours.
+  if (!Number.isFinite(errorMinutes) || errorMinutes < 0 || errorMinutes > 720) {
+    res.status(400).json({ error: "errorMinutes must be between 0 and 720." });
+    return;
+  }
+  if (!Number.isFinite(windowMinutes) || windowMinutes < 0 || windowMinutes > 1440) {
+    res.status(400).json({ error: "windowMinutes is out of range." });
+    return;
+  }
+  if (!Number.isFinite(eventCount) || eventCount < 1 || eventCount > MAX_EVENTS_PER_CHART) {
+    res.status(400).json({ error: "eventCount is out of range." });
+    return;
+  }
+  if (!VERDICTS.has(verdict)) { res.status(400).json({ error: "Unknown verdict." }); return; }
+
+  const decade = int(b.birthDecade);
+  await recordAccuracy(uid(req), {
+    errorMinutes,
+    insideWindow: b.insideWindow === true,
+    windowMinutes,
+    verdict,
+    separationZ: typeof b.separationZ === "number" && Number.isFinite(b.separationZ)
+      ? Math.max(-99, Math.min(99, b.separationZ)) : null,
+    eventCount,
+    precisionMix: typeof b.precisionMix === "string" ? b.precisionMix.slice(0, 60) : "",
+    timeOfDay: typeof b.timeOfDay === "string" ? b.timeOfDay.slice(0, 20) : "unknown",
+    birthDecade: Number.isFinite(decade) && decade >= 1800 && decade <= 2100 ? decade : null,
+  });
+  res.status(201).json({ ok: true });
 });
 
 lifeEventsRouter.delete("/:id", async (req: Request, res: Response) => {

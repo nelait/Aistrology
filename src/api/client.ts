@@ -166,6 +166,17 @@ export interface LifeEventPayload {
   type: string; eventDate: string; precision: string; confidence: string; note?: string;
 }
 
+export interface AccuracyReport {
+  errorMinutes: number; insideWindow: boolean; windowMinutes: number;
+  verdict: string; separationZ: number | null; eventCount: number;
+  precisionMix: string; timeOfDay: string; birthDecade: number | null;
+}
+export interface AdminAccuracyStats {
+  total: number; insideWindow: number; medianErrorMinutes: number | null;
+  within30: number; within120: number;
+  byVerdict: Array<{ verdict: string; n: number; inside: number; medianError: number | null }>;
+}
+
 // --- Feature feedback ---
 export interface AdminFeedback {
   id: string; feature: string; rating: "up" | "down"; comment: string;
@@ -783,6 +794,16 @@ export const api = {
   },
   async deleteLifeEvent(id: string): Promise<void> {
     await unwrap<{ ok: boolean }>(await fetch(`/api/life-events/${id}`, { method: "DELETE" }));
+  },
+
+  /** Opt-in only: the outcome of a birth-time search, never the events. */
+  async contributeAccuracy(report: AccuracyReport): Promise<void> {
+    await unwrap<{ ok: boolean }>(await fetch("/api/life-events/accuracy", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(report),
+    }));
+  },
+  async getAdminAccuracy(): Promise<AdminAccuracyStats> {
+    return unwrap<AdminAccuracyStats>(await fetch("/api/admin/rectification-accuracy"));
   },
 
   // --- Feature feedback ---

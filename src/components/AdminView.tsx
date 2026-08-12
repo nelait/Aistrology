@@ -18,6 +18,7 @@ import {
   AdminContactMessage,
   AdminBillingEvent,
   AdminFeedback,
+  AdminAccuracyStats,
   FeedbackSummaryRow,
   AdminQuotas,
   PlanLimits,
@@ -87,7 +88,7 @@ function AdminGate({ defaultEmail, onExit }: { defaultEmail: string; onExit: () 
 
 /* -------------------- Dashboard shell -------------------- */
 
-type Section = "overview" | "usage" | "limits" | "users" | "approvals" | "temples" | "reminders" | "promos" | "contact" | "feedback" | "billing" | "notify" | "llm" | "features";
+type Section = "overview" | "usage" | "limits" | "users" | "approvals" | "temples" | "reminders" | "promos" | "contact" | "feedback" | "accuracy" | "billing" | "notify" | "llm" | "features";
 const SECTIONS: [Section, string][] = [
   ["overview", "Overview"],
   ["usage", "Usage & Limits"],
@@ -99,6 +100,7 @@ const SECTIONS: [Section, string][] = [
   ["promos", "Promo Codes"],
   ["contact", "Contact"],
   ["feedback", "Feedback"],
+  ["accuracy", "Rectifier accuracy"],
   ["billing", "Billing"],
   ["notify", "Notifications"],
   ["llm", "AI / LLM"],
@@ -134,6 +136,7 @@ function AdminDashboard({ onExit }: { onExit: () => void }) {
         {section === "promos" && <PromosSection />}
         {section === "contact" && <ContactAdminSection />}
         {section === "feedback" && <FeedbackSection />}
+        {section === "accuracy" && <AccuracySection />}
         {section === "billing" && <BillingEventsSection />}
         {section === "notify" && <NotifySection />}
         {section === "llm" && <LlmSection />}
@@ -1321,6 +1324,73 @@ function ContactAdminSection() {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* -------------------- Rectifier accuracy -------------------- */
+
+function AccuracySection() {
+  const [stats, setStats] = useState<AdminAccuracyStats | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getAdminAccuracy().then(setStats).catch((e) => setErr(e instanceof Error ? e.message : "Failed"));
+  }, []);
+
+  if (err) return <p className="error">{err}</p>;
+  if (!stats) return <p className="muted small">Loading…</p>;
+
+  const pct = (n: number) => (stats.total ? `${Math.round((n / stats.total) * 100)}%` : "—");
+
+  return (
+    <div className="admin-section">
+      <p className="muted small">
+        Opt-in reports from users who already knew their birth time and ran the search
+        without it. This is the only real accuracy evidence this feature has — and the only
+        thing that could ever retire its “traditional method, unvalidated” label.
+        Aggregates only; individual reports are not stored in a form anyone can read back.
+      </p>
+
+      {stats.total === 0 ? (
+        <p className="muted small">
+          No reports yet. They arrive only when a user with a known birth time runs the
+          search and chooses to contribute the outcome.
+        </p>
+      ) : (
+        <>
+          <div className="admin-stats">
+            <div className="stat"><span className="stat-num">{stats.total}</span><span className="muted small">reports</span></div>
+            <div className="stat"><span className="stat-num">{pct(stats.insideWindow)}</span><span className="muted small">true time inside the window</span></div>
+            <div className="stat"><span className="stat-num">{stats.medianErrorMinutes ?? "—"}m</span><span className="muted small">median error</span></div>
+            <div className="stat"><span className="stat-num">{pct(stats.within30)}</span><span className="muted small">within 30 min</span></div>
+            <div className="stat"><span className="stat-num">{pct(stats.within120)}</span><span className="muted small">within 2 hours</span></div>
+          </div>
+
+          <div className="admin-table-wrap" style={{ marginTop: 18 }}>
+            <table className="admin-table">
+              <thead>
+                <tr><th>Verdict</th><th>Reports</th><th>Inside window</th><th>Median error</th></tr>
+              </thead>
+              <tbody>
+                {stats.byVerdict.map((v) => (
+                  <tr key={v.verdict}>
+                    <td>{v.verdict}</td>
+                    <td>{v.n}</td>
+                    <td>{v.n ? `${Math.round((v.inside / v.n) * 100)}%` : "—"}</td>
+                    <td>{v.medianError ?? "—"}m</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted small" style={{ marginTop: 12 }}>
+            The row that matters is <strong>inconclusive</strong>: those are the runs the
+            feature declined to answer. If their error is no worse than the confident rows,
+            the confidence signal is not working.
+          </p>
+        </>
       )}
     </div>
   );

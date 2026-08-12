@@ -173,6 +173,43 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Opt-in accuracy reports for the birth-time rectifier
+
+Phase F, the last of [rectification & event analysis](rectification-and-event-analysis.md),
+and the only licence-clean route to real ground truth: users who already know
+their birth time have just watched the search run without it, so comparing the
+two is a genuine held-out test on data that is theirs.
+
+- **Result first, consent second.** After a scan the panel asks *"Do you already
+  know this birth time?"*, then shows the comparison — recorded time, window
+  centre, error in minutes, inside or outside — and only then asks whether it may
+  be kept. Opting in is never a blind act, and the comparison is useful either
+  way. Declining sends nothing, verified by intercepting `fetch`.
+- **What is stored**: the error, whether it landed inside the window, the window
+  width, the verdict, the separation z, how many events and how well dated, the
+  time-of-day constraint, and the birth **decade**. **Not** the birth time, the
+  date, the place, or any event. `user_id` is kept for exactly one reason — so
+  the row disappears with the account — and is never read back, including by an
+  admin.
+- **The endpoint rejects what would poison the statistic and sanitises what
+  would not.** An error outside 0–720 minutes (twelve hours is the furthest two
+  points on a 24-hour circle can be), an unknown verdict or an impossible event
+  count are refused; a nonsense birth decade becomes null and a wild z is
+  clamped. Rejecting that second class would throw away otherwise sound reports.
+- **Admin → Rectifier accuracy** shows aggregates only — reports, % inside
+  window, median error, % within 30 minutes and 2 hours, split by verdict. The
+  row worth watching is `inconclusive`: those are the runs the feature declined
+  to answer, and if their error is no worse than the confident rows then the
+  confidence signal is not working.
+- Verified end to end against the known-time test profile: *"Inside the window.
+  Recorded time 09:42, window centre 09:45 — out by 3 minutes."*
+- One bug caught in review: "No thanks" set the same state as contributing, so a
+  user who declined would have been told "Recorded — thank you". Declining now
+  has its own state and its own message.
+- Files: `server/db.ts`, `server/lifeEvents.ts`, `server/admin.ts`,
+  `src/api/client.ts`, `src/components/RectifyView.tsx`,
+  `src/components/AdminView.tsx`, `src/styles.css`.
+
 ## Plain-words explanations for life events
 
 Phase E of [rectification & event analysis](rectification-and-event-analysis.md).
@@ -911,7 +948,8 @@ See `.env.example` for the full list.
 `global_settings`, `temples`, `temple_services`, `temple_events`,
 `reminders`, `festivals`, `festival_subscriptions`, `promo_codes`,
 `promo_redemptions`, `contact_messages`, `billing_events`,
-`chat_conversations`, `chat_messages`, `notes`, `feedback`, `life_events`. New `users` columns
+`chat_conversations`, `chat_messages`, `notes`, `feedback`, `life_events`,
+`rectification_accuracy`. New `users` columns
 include `role`, `suspended`, `plan_expires_at`, `plan_source` (now also takes
 `'disputed'`), and (from earlier work) `email_verified`, `total_charts_created`.
 All added idempotently in `initDb()`.

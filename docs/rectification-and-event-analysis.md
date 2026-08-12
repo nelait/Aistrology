@@ -1,8 +1,12 @@
 # Birth-Time Rectification & Event Analysis — Research and Plan
 
-Status: **Phases A–E shipped.** Event analysis, the ablation study, the engine
-work it called for, rectification, and the LLM narration over the deterministic
-findings. Phase F (opt-in accuracy collection) is not started.
+Status: **All phases shipped (A–F).** Event analysis with a null arm, the
+ablation study, the engine work it called for, birth-time rectification, LLM
+narration over the deterministic findings, and opt-in accuracy collection.
+
+The feature still carries its **"traditional method, unvalidated"** label, and
+will until the accuracy reports in Phase F say otherwise. That is now a
+question with an answer rather than a permanent disclaimer.
 
 Two features were asked for:
 
@@ -563,13 +567,37 @@ This tests the machinery against itself, which is exactly its limit and should
 be stated wherever the numbers appear. **It belongs in Phase B, not now** —
 there is no scorer yet for it to test.
 
-### A licence-clean route to real data, later
+### A licence-clean route to real data — **shipped**
 
-Users who *do* know their birth time can opt in: they enter their events, the
-rectifier runs with their time hidden, and the error is recorded. That
-accumulates a genuine, consented validation set with no licensing problem, from
-exactly the population that cares. It needs explicit opt-in, should store only
-the error and not the events, and is a Phase F item.
+Users who already know their birth time are the one source of ground truth that
+needs no licence, because the data is theirs. The search has just run **without**
+using the stored time, so comparing the two is a genuine held-out test.
+
+**Events → Unknown birth time**, after a scan:
+
+1. *"Do you already know this birth time?"* — nothing happens unless asked.
+2. The comparison is shown **first**: recorded time, window centre, the error in
+   minutes, and whether the true time fell inside the window. This is useful to
+   the user whether or not they contribute.
+3. *Then* consent is asked, itemising exactly what would be stored.
+
+What is stored: the error, whether it landed inside, the window width, the
+verdict, the separation z, how many events and how well dated, the time-of-day
+constraint, and the birth **decade**. What is not: the birth time, the date, the
+place, or any event. The `user_id` is kept for one reason — so the row goes when
+the account does — and is never read back. Declining sends nothing at all,
+verified by intercepting `fetch`.
+
+The write endpoint **rejects** anything that would poison the statistic (an
+error outside 0–720 minutes, an unknown verdict, an impossible event count) and
+**sanitises** what is merely descriptive (a nonsense decade becomes null, a wild
+z is clamped). Rejecting the second class would lose otherwise good reports.
+
+**Admin → Rectifier accuracy** shows aggregates only: reports, % inside window,
+median error, % within 30 minutes and 2 hours, broken down by verdict. The row
+to watch is `inconclusive` — those are the runs the feature declined to answer,
+and if their error is no worse than the confident rows then the confidence
+signal is not working.
 
 ---
 
@@ -594,7 +622,7 @@ the error and not the events, and is a Phase F item.
 | **C** ✅ | Fixed the dasha anchor; added Ashtakavarga, D4, D16, D24, D30 and D60 | Accuracy prerequisites for fine resolution |
 | **D** ✅ | Rectification scan, heatmap, confidence UI | The headline feature, on a scorer that has been tested. The retrodiction loop is the one piece not built. |
 | **E** ✅ | LLM narration over the deterministic reasons | Reuses the *Justify* endpoint, prompt contract and quota outright |
-| **F** | Opt-in accuracy collection from users who know their birth time | The only licence-clean route to real ground truth |
+| **F** ✅ | Opt-in accuracy collection from users who know their birth time | The only licence-clean route to real ground truth |
 
 Phases A and B together are the honest minimum before showing anyone a
 rectified birth time.

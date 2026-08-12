@@ -42,6 +42,7 @@ import {
   type ContactMessageRow,
   listBillingEvents,
   type BillingEventRow,
+  accuracyStats,
   listFeedback,
   feedbackSummary,
   setFeedbackStatus,
@@ -553,6 +554,14 @@ function apiBillingEvent(b: BillingEventRow & { account_email?: string | null })
 
 adminRouter.get("/billing-events", async (_req, res) => {
   res.json({ events: (await listBillingEvents()).map(apiBillingEvent) });
+});
+
+// ── Rectification accuracy (opt-in reports) ──────────────────────────────
+
+// Aggregate only. Individual reports are never exposed, including here — the
+// contribution was offered on the understanding that it becomes a statistic.
+adminRouter.get("/rectification-accuracy", async (_req, res) => {
+  res.json(await accuracyStats());
 });
 
 // ── Feature feedback ─────────────────────────────────────────────────────
