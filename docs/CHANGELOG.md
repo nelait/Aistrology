@@ -173,6 +173,58 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Documented life events on the sample charts
+
+Pick one of eight celebrities from **⭐ Other celebrities** and their real,
+sourced life events load into the Events tab — so the event analysis and the
+birth-time search can be tried on historical fact instead of something invented.
+
+- **Eight figures, 57 events, every date read from the cited Wikipedia article**
+  rather than recalled, each row keeping the precision the source actually gave.
+  Year-only dates sit at 1 July and month-only on the 15th, which minimises
+  worst-case error and stops the data claiming precision no source supports.
+- **Held in the app, never in the database.** They are matched off the loaded
+  birth data — on name *and* date, so a user's own profile that happens to share
+  a famous name does not inherit that person's life. They are tagged `doc`, they
+  carry a source link, and they have no Remove button because they are not the
+  user's records.
+- **The tab says plainly that the readings are not meaningful.** These birth
+  times are unknown, so the chart uses a 12:00 placeholder — and moving that
+  placeholder across the day was measured giving four different Lagnas, a first
+  Mahadasha ending anywhere from 1952 to 1960, and either Jupiter or Saturn
+  running in 2000. The events are there for the *rectifier*, which derives a
+  time rather than assuming one.
+- **The accuracy check refuses these charts.** Offering to compare a window
+  against a 12:00 placeholder would have fed meaningless errors into the one
+  real accuracy dataset the project has.
+
+### And the result is negative
+
+Running the rectifier on all eight returns **Inconclusive**, with separation z
+between −2.4 and 1.7 against a 3.5 threshold. A control — same charts, same
+event types, same date precisions, dates moved to fit a birth time of 14:20 —
+comes back conclusive on 5 of 5 and lands **2–7 minutes** from the planted time
+at z 3.8–9.6.
+
+So the machinery works and the finding is real: on these eight people's actual
+documented lives, the method does not separate the true dates from unrelated
+ones. That is not proof Jyotisha is wrong — the birth times are unknown, so
+there is nothing to be right or wrong about — but it is the first real-world
+evidence this project has produced, and it is worth more than any amount of
+synthetic recovery. A rectifier that had answered confidently for all eight
+would be the thing to worry about.
+
+- One bug found in the browser: the panel bailed out on an unsaved profile, so
+  picking a celebrity showed "Life events (7)" over an empty page. Documented
+  events live in the app rather than the database and must render without one.
+- 9 new tests over the dataset: roster names and dates match, types are ones the
+  engine scores, every date falls between birth and today, imprecise dates sit
+  mid-period as their precision claims, and the lookup never matches on name
+  alone. 419 pass.
+- Files: `src/data/celebrityEvents.ts` (+ `.test.ts`),
+  `src/components/EventsTab.tsx`, `src/components/LifeEventsView.tsx`,
+  `src/components/RectifyView.tsx`, `src/styles.css`.
+
 ## Documentation pass over the recent work
 
 - **[Life events & rectification](life-events.md)** — new. The *usage* guide the

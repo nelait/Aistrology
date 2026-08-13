@@ -28,6 +28,8 @@ interface Props {
   chartId: string | null;
   /** Owned by EventsTab, because the rectification view needs the same list. */
   events: ApiLifeEvent[];
+  /** Set when the loaded chart is a sample figure with documented events. */
+  demoSource: { name: string; source: string; count: number } | null;
   loading: boolean;
   loadError: string | null;
   onChange: (events: ApiLifeEvent[]) => void;
@@ -67,7 +69,7 @@ function fmt(d: Date): string {
 }
 
 export default function LifeEventsView({
-  chart, chartId, events, loading, loadError, onChange,
+  chart, chartId, events, demoSource, loading, loadError, onChange,
 }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -191,7 +193,11 @@ export default function LifeEventsView({
     }
   }
 
-  if (!chartId) {
+  // An unsaved profile has nowhere to store events — but a sample figure's
+  // documented ones live in the app, not the database, so they must still show.
+  // Bailing out here on `!chartId` alone hid the whole point of picking a
+  // celebrity: the subtab counted seven events and the panel was blank.
+  if (!chartId && !demoSource) {
     return (
       <div className="life-events">
         <h3>Your life events</h3>
@@ -212,6 +218,23 @@ export default function LifeEventsView({
         texts send you to.
       </p>
 
+      {demoSource && (
+        <p className="le-demo-note">
+          <strong>{demoSource.count} documented events</strong> for {demoSource.name}, read from{" "}
+          <a className="link" href={demoSource.source} target="_blank" rel="noreferrer noopener">
+            Wikipedia
+          </a>{" "}
+          — marked <span className="le-doc-tag">doc</span> below. They are here to try the
+          feature on real facts, and you can add your own alongside them.
+          <br />
+          <strong>The readings below are not meaningful for this chart.</strong> This sample
+          figure&apos;s birth time is unknown, so the chart uses a 12:00 placeholder — and the
+          dashas everything is read from depend on it. Use{" "}
+          <em>Unknown birth time</em> instead: that is the tab these events are genuinely for,
+          because it works out a time rather than assuming one.
+        </p>
+      )}
+
       <p className="le-caveat">
         <strong>Traditional method, unvalidated.</strong> These readings apply classical
         rules as written; they have not been tested against a controlled study, and nothing
@@ -224,6 +247,11 @@ export default function LifeEventsView({
       {/* noValidate: the browser's own constraint checking blocks submit before
           our handler runs, which left a failed add with no explanation. All of
           it is checked in `add` instead, where the message can be shown. */}
+      {!chartId ? (
+        <p className="muted small le-unsaved">
+          Save this profile to add events of your own alongside the documented ones.
+        </p>
+      ) : (
       <form className="le-form" onSubmit={add} noValidate>
         <div className="le-form-grid">
           <label>
@@ -268,6 +296,7 @@ export default function LifeEventsView({
           </button>
         </div>
       </form>
+      )}
 
       {(error || loadError) && <p className="error small">{error ?? loadError}</p>}
 
@@ -281,8 +310,9 @@ export default function LifeEventsView({
             const row = events[i];
             const id = row?.id ?? String(i);
             const expanded = open === id;
-            return (
-              <div key={id} className={`le-item band-${a.band}`}>
+              const isDemo = id.startsWith("demo-");
+              return (
+              <div key={id} className={`le-item band-${a.band}${isDemo ? " demo" : ""}`}>
                 <button
                   type="button"
                   className="le-head"
@@ -290,7 +320,10 @@ export default function LifeEventsView({
                   onClick={() => setOpen(expanded ? null : id)}
                 >
                   <span className="le-when">{fmt(a.date)}</span>
-                  <span className="le-what">{a.label}</span>
+                  <span className="le-what">
+                    {a.label}
+                    {isDemo && <span className="le-doc-tag" title="Documented, from Wikipedia">doc</span>}
+                  </span>
                   <span className={`le-band band-${a.band}`}>{BAND_LABEL[a.band]}</span>
                   {a.percentile !== null && (
                     <span className="le-pct muted small" title="Against random dates in your life">
@@ -362,9 +395,11 @@ export default function LifeEventsView({
 
                     <div className="le-item-foot">
                       {row?.note && <span className="muted small">“{row.note}”</span>}
-                      <button className="mini-btn no" disabled={busy} onClick={() => remove(id)}>
-                        Remove
-                      </button>
+                      {!isDemo && (
+                        <button className="mini-btn no" disabled={busy} onClick={() => remove(id)}>
+                          Remove
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}

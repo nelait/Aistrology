@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Chart } from "../astro/types";
 import { api, ApiLifeEvent } from "../api/client";
+import { celebrityEventsFor } from "../data/celebrityEvents";
 import EventsView from "./EventsView";
 import LifeEventsView from "./LifeEventsView";
 import RectifyView from "./RectifyView";
@@ -39,6 +40,26 @@ export default function EventsTab({ chart, chartId }: Props) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Sample charts carry documented events. They are matched off the loaded
+  // birth data rather than passed down from the picker, so they appear however
+  // the chart was loaded — and they are never written to the database: these
+  // are somebody else's life, not the user's own records.
+  const demo = celebrityEventsFor(chart.birth);
+  const demoEvents: ApiLifeEvent[] = demo
+    ? demo.events.map((e, i) => ({
+        id: `demo-${i}`,
+        chartId: chartId ?? "demo",
+        type: e.type,
+        eventDate: e.date,
+        precision: e.precision,
+        confidence: "sure",
+        note: e.what,
+        createdAt: 0,
+        updatedAt: 0,
+      }))
+    : [];
+  const combined = [...demoEvents, ...events].sort((a, b) => a.eventDate.localeCompare(b.eventDate));
+
   return (
     <div className="events-tab">
       <div className="subtabs">
@@ -46,7 +67,7 @@ export default function EventsTab({ chart, chartId }: Props) {
           From the chart
         </button>
         <button className={view === "mine" ? "active" : ""} onClick={() => setView("mine")}>
-          Your life events{events.length ? ` (${events.length})` : ""}
+          {demo ? "Life events" : "Your life events"}{combined.length ? ` (${combined.length})` : ""}
         </button>
         <button className={view === "rectify" ? "active" : ""} onClick={() => setView("rectify")}>
           Unknown birth time
@@ -58,13 +79,14 @@ export default function EventsTab({ chart, chartId }: Props) {
         <LifeEventsView
           chart={chart}
           chartId={chartId}
-          events={events}
+          events={combined}
+          demoSource={demo ? { name: demo.name, source: demo.source, count: demoEvents.length } : null}
           loading={loading}
           loadError={error}
           onChange={setEvents}
         />
       )}
-      {view === "rectify" && <RectifyView chart={chart} events={events} />}
+      {view === "rectify" && <RectifyView chart={chart} events={combined} />}
     </div>
   );
 }

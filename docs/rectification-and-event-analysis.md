@@ -485,7 +485,38 @@ Counter-indications are passed in as facts and the model is told to state them.
 On that weak reading it named both: the running Sade Sati, and the D24 lagna
 lord being absent from the dasha lords.
 
-### The honest ceiling
+### First contact with real data — and it says no
+
+Eight of the sample charts now carry documented life events, read from Wikipedia
+(see [Life events](life-events.md)). Running the rectifier on them is the first
+time any of this has met real-world data rather than events the model generated
+for itself.
+
+**All eight came back `Inconclusive`**, with separation z between −2.4 and 1.7
+against a threshold of 3.5.
+
+| | Real documented events | Control |
+| --- | --- | --- |
+| Verdict | Inconclusive, 8 of 8 | Conclusive, 5 of 5 |
+| Error vs. planted time | — | **2–7 minutes** |
+| Separation z | −2.4 to 1.7 | **3.8 to 9.6** |
+
+The control matters, because without it this would just look like a broken
+feature. It uses the *same charts*, the *same event types* and the *same date
+precisions* — only the dates are moved to fit a birth time of 14:20. The
+machinery finds that easily. Given what actually happened to those eight people,
+it finds nothing.
+
+**What this does and does not show.** It is not proof that Jyotisha is wrong,
+and it cannot be: the birth times are unknown, so there is no answer to be right
+or wrong about. What it shows is narrower and still worth stating — *this*
+implementation, on *these* events, at *these* date precisions, does not separate
+the real dates from unrelated ones. Caveats: n = 8; many dates are year-only,
+which the scaling law says caps resolution near an hour; and a practising
+Jyotishi might choose different events, or weight them differently.
+
+It is also, in a real sense, the feature working. A rectifier that produced a
+confident time for all eight would be the thing to worry about.
 
 | Claim | Defensible? |
 | ----- | ----------- |

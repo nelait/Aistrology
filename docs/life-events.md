@@ -142,6 +142,34 @@ This is the only licence-clean route to real validation — no public dataset of
 birth times exists that can be used (see Part 5 of the research). Aggregates
 appear in **Admin → Rectifier accuracy**.
 
+## Documented events on the sample charts
+
+Eight of the celebrity sample charts carry real life events read from Wikipedia
+— Rajinikanth, Kamal Haasan, Amitabh Bachchan, Jawaharlal Nehru, Indira Gandhi,
+Barack Obama, Abraham Lincoln and John F. Kennedy. Pick one from **⭐ Other
+celebrities** and they appear automatically, tagged `doc`, with a link to the
+source. They are held in the app, never written to the database, and cannot be
+deleted — they are not the user's records.
+
+Each row keeps the precision its source gave. Where Wikipedia said only a year,
+the date sits at 1 July and is marked year-precision; a month-only date sits on
+the 15th. That is deliberate — it minimises the worst-case error and stops the
+data claiming a precision no source supports.
+
+**Read them in *Unknown birth time*, not in the readings.** These figures'
+birth times are not known, so the chart uses a 12:00 placeholder — and moving
+that placeholder across the day changes the Lagna, the running Mahadasha, and
+therefore the whole reading. The tab says so. Rectification is the tab these
+events are actually for, because it derives a time instead of assuming one.
+
+The accuracy check is disabled on these charts: there is no real time to compare
+a window against, so nothing is offered and nothing is recorded.
+
+**What happens when you run it:** all eight come back *Inconclusive*. That is
+not a bug — a control using the same charts and the same date precisions, with
+dates fitted to a chosen birth time, recovers that time to within 2–7 minutes.
+See [the research](rectification-and-event-analysis.md#first-contact-with-real-data--and-it-says-no).
+
 ## Honesty
 
 The feature is labelled **"traditional method, unvalidated"** in the interface.

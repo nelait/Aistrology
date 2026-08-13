@@ -18,6 +18,7 @@ import {
   TIME_OF_DAY,
 } from "../astro/rectify";
 import { ordinal } from "../astro/interpret";
+import { celebrityEventsFor } from "../data/celebrityEvents";
 
 interface Props {
   chart: Chart;
@@ -201,6 +202,22 @@ function AccuracyCheck({
 }) {
   const best = result.windows[0];
   if (!best) return null;
+
+  // A sample figure's stored time is a 12:00 placeholder, not a birth time.
+  // Offering to "check how close it got" against it would be inviting the user
+  // to record a meaningless error into the one accuracy dataset there is.
+  if (celebrityEventsFor(chart.birth)) {
+    return (
+      <div className="rx-accuracy">
+        <strong className="small">No time to check this against</strong>
+        <p className="muted small">
+          This is a sample chart, and its birth time is not known — the 12:00 on the profile
+          is a placeholder. There is nothing to compare the window with, so nothing is
+          recorded. Load a profile whose birth time you actually know to test the search.
+        </p>
+      </div>
+    );
+  }
 
   const trueMinute = chart.birth.hour * 60 + chart.birth.minute;
   const centre = Math.floor((best.startMinute + best.endMinute) / 2);
