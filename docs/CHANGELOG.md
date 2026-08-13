@@ -173,6 +173,35 @@ to the repo root.
   `src/api/client.ts`, `src/App.tsx`, `src/main.tsx`, and the Doshas/Muhurta/Vastu
   views.
 
+## Documented events extended to all fifty sample charts
+
+The other 42 celebrities now carry sourced life events too — **344 events across
+all 50**, every date read from the cited Wikipedia article rather than recalled.
+
+- **Coverage is uneven on purpose.** Politicians and historical figures have
+  densely dated public lives; modern film actors often do not, and their
+  articles routinely omit marriage dates and children's birthdays. The thinnest
+  sets have four events. Padding them would have meant inventing dates, which is
+  the one thing the file exists to avoid, so the test floor was lowered from
+  five to four and the shortfall documented instead.
+- **Two errors the tests caught**, both mine: Kangana Ranaut's birth year, where
+  I had written 1987 and both the roster and Wikipedia say 1986; and a set that
+  fell below the event floor. The name-and-date match means a drifted year
+  would have silently stopped the events ever appearing rather than showing
+  anything visibly wrong.
+- **A pre-existing broken link fixed**: the roster pointed Dr. Rajkumar at
+  `Rajkumar_(Kannada_actor)`, which 404s. It is `Dr._Rajkumar`.
+
+### The negative result holds at n = 50
+
+**48 of 50 come back `Inconclusive`.** Two do not — Y. S. Rajasekhara Reddy at
+z = 3.5 and Yogi Adityanath at z = 4.0 — and those two are the informative part.
+The threshold sits at a measured **7% false-positive rate** on arbitrary dates,
+which over fifty charts predicts about 3.5 spurious "conclusive" results. Two
+were observed. The real documented lives of fifty people therefore perform
+*slightly below chance*, which is about as clean a null result as this could
+produce, and it holds the n = 8 finding at six times the sample size.
+
 ## Documented life events on the sample charts
 
 Pick one of eight celebrities from **⭐ Other celebrities** and their real,

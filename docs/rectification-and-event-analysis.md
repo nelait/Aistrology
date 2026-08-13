@@ -487,13 +487,22 @@ lord being absent from the dasha lords.
 
 ### First contact with real data — and it says no
 
-Eight of the sample charts now carry documented life events, read from Wikipedia
-(see [Life events](life-events.md)). Running the rectifier on them is the first
-time any of this has met real-world data rather than events the model generated
-for itself.
+All fifty sample charts now carry documented life events, read from Wikipedia
+(see [Life events](life-events.md)) — 344 events in total. Running the rectifier
+across them is the first time any of this has met real-world data rather than
+events the model generated for itself.
 
-**All eight came back `Inconclusive`**, with separation z between −2.4 and 1.7
-against a threshold of 3.5.
+**48 of 50 came back `Inconclusive`.** Two did not: Y. S. Rajasekhara Reddy
+(z = 3.5) and Yogi Adityanath (z = 4.0).
+
+Those two are the interesting part, and they are almost certainly noise. The
+threshold was chosen at a **measured 7% false-positive rate** on arbitrary
+dates, which over fifty charts predicts about 3.5 spurious "conclusive" results.
+Two were observed. The real data is therefore performing *slightly below* what
+pure chance would produce — which is as clean a null result as this could give.
+
+An earlier run on the first eight charts gave the same answer with separation z
+between −2.4 and 1.7.
 
 | | Real documented events | Control |
 | --- | --- | --- |

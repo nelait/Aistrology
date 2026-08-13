@@ -144,11 +144,14 @@ appear in **Admin → Rectifier accuracy**.
 
 ## Documented events on the sample charts
 
-Eight of the celebrity sample charts carry real life events read from Wikipedia
-— Rajinikanth, Kamal Haasan, Amitabh Bachchan, Jawaharlal Nehru, Indira Gandhi,
-Barack Obama, Abraham Lincoln and John F. Kennedy. Pick one from **⭐ Other
-celebrities** and they appear automatically, tagged `doc`, with a link to the
-source. They are held in the app, never written to the database, and cannot be
+All fifty celebrity sample charts carry real life events read from Wikipedia —
+344 of them. Pick anyone from **⭐ Other celebrities** and they appear
+automatically, tagged `doc`, with a link to the source.
+
+Coverage is uneven, deliberately. Politicians and historical figures have
+densely dated public lives; modern film actors often do not, and their articles
+frequently omit marriage dates and children's birthdays altogether. The thinnest
+sets have four events. Padding them out would have meant inventing dates. They are held in the app, never written to the database, and cannot be
 deleted — they are not the user's records.
 
 Each row keeps the precision its source gave. Where Wikipedia said only a year,
@@ -165,10 +168,12 @@ events are actually for, because it derives a time instead of assuming one.
 The accuracy check is disabled on these charts: there is no real time to compare
 a window against, so nothing is offered and nothing is recorded.
 
-**What happens when you run it:** all eight come back *Inconclusive*. That is
+**What happens when you run it:** 48 of the 50 come back *Inconclusive*. That is
 not a bug — a control using the same charts and the same date precisions, with
 dates fitted to a chosen birth time, recovers that time to within 2–7 minutes.
-See [the research](rectification-and-event-analysis.md#first-contact-with-real-data--and-it-says-no).
+And the two that do come back conclusive are fewer than the ~3.5 that the
+method's measured 7% false-positive rate predicts by chance alone. See
+[the research](rectification-and-event-analysis.md#first-contact-with-real-data--and-it-says-no).
 
 ## Honesty
 

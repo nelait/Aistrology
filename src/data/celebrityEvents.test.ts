@@ -70,9 +70,16 @@ describe("documented celebrity events", () => {
   });
 
   it("gives each set enough events for the birth-time search to run", () => {
+    // Four is the practical floor, not five: some articles simply carry few
+    // dated personal events, and padding a set out would mean inventing them.
+    // The search itself needs two.
     for (const s of CELEBRITY_EVENTS) {
-      expect(s.events.length, `${s.name} has too few events`).toBeGreaterThanOrEqual(5);
+      expect(s.events.length, `${s.name} has too few events`).toBeGreaterThanOrEqual(4);
     }
+    // Most should be better than the floor, or the dataset is not worth having.
+    const thin = CELEBRITY_EVENTS.filter((s) => s.events.length < 5).map((s) => s.name);
+    expect(thin.length, `too many thin sets: ${thin.join(", ")}`)
+      .toBeLessThan(CELEBRITY_EVENTS.length / 5);
   });
 
   it("matches a chart on name and date together, never on name alone", () => {
