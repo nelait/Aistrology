@@ -252,7 +252,7 @@ export default function App() {
         <div className="brand">
           <span className="logo">☸</span>
           <div>
-            <h1>Aistrology</h1>
+            <h1>Shastri</h1>
             <p className="tagline">Understand the sky. Align your space. Honour the ritual.</p>
           </div>
         </div>
@@ -372,7 +372,7 @@ export default function App() {
             <span className="intro-eyebrow">✦ Jyotisha · Vastu · Consultations · Temples · Learning</span>
             <h2>Cast your Janma Kundali</h2>
             <p>
-              It starts with a birth date, time and place. Aistrology computes a precise sidereal
+              It starts with a birth date, time and place. Shastri computes a precise sidereal
               (Nirayana) chart using the Lahiri ayanamsa and explains what it means — then keeps
               going: ask questions about your own chart, book a session with an astrologer or
               priest, check a home with Vastu, find auspicious days, keep your rituals and
@@ -509,7 +509,7 @@ export default function App() {
             <span className="section-eyebrow">Temple Affiliation</span>
             <h2>🛕 Register Your Temple</h2>
             <p className="landing-temple-sub">
-              Are you a temple official? Register your temple on Aistrology to reach devotees.
+              Are you a temple official? Register your temple on Shastri to reach devotees.
               List your pooja services, maintain an event calendar, and connect with your community.
             </p>
             <div className="landing-temple-features">
@@ -911,7 +911,7 @@ export default function App() {
 
       <footer className="app-footer">
         <p className="muted">
-          Aistrology computes sidereal positions with the Lahiri ayanamsa and whole-sign houses.
+          Shastri computes sidereal positions with the Lahiri ayanamsa and whole-sign houses.
           Interpretations follow classical Jyotisha and are offered for learning and reflection —
           not as medical, legal, financial or psychological advice.
         </p>

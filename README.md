@@ -1,10 +1,10 @@
-# ☸ Aistrology
+# ☸ Shastri
 
 **A complete Indian Vedic astrology (Jyotisha) application** — compute a precise
 birth chart from time and place, understand what it means, learn the theory as
 you go, and receive predictions and remedies with the reasoning behind them.
 
-The astronomy is fully self-contained: Aistrology computes planetary positions
+The astronomy is fully self-contained: Shastri computes planetary positions
 with its own engine (no ephemeris files, no external APIs) entirely in the
 browser. An **optional API server** adds social sign-in and cloud-saved charts —
 the chart computation never leaves the client.
@@ -93,9 +93,9 @@ Authentication:
 
 Setup:
 
-1. Create the database: `createdb aistrology`
+1. Create the database: `createdb shastri`
 2. `cp .env.example .env`, set `SESSION_SECRET` and `DATABASE_URL`
-   (default `postgres://localhost:5432/aistrology`).
+   (default `postgres://localhost:5432/shastri`).
 3. (Optional) register OAuth apps and add the client id/secret:
    - **Google** — <https://console.cloud.google.com/apis/credentials>, redirect URI `<APP_URL>/auth/google/callback`
    - **GitHub** — <https://github.com/settings/developers>, callback URL `<APP_URL>/auth/github/callback`
@@ -144,7 +144,7 @@ src/
 
 ## A note on intent
 
-Aistrology presents classical Jyotisha for **learning and reflection**. It is not
+Shastri presents classical Jyotisha for **learning and reflection**. It is not
 a substitute for medical, legal, financial or psychological advice, and its
 predictions and remedies are offered as traditional guidance and self-work, not
 as guarantees.

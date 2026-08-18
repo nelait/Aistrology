@@ -1,6 +1,6 @@
 # Vastu Shastra Analysis
 
-Aistrology includes a **Vastu Shastra** module that analyses the suitability
+Shastri includes a **Vastu Shastra** module that analyses the suitability
 of a property for a user based on their Vedic birth chart, a property
 questionnaire, and an optional floor plan image upload.
 

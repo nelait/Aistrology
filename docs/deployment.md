@@ -1,6 +1,6 @@
 # Deployment
 
-Production hosting for Aistrology.
+Production hosting for Shastri.
 
 > **Railway is the supported path, and the app is deployed on it.**
 > For step-by-step instructions and a troubleshooting guide covering every

@@ -58,7 +58,7 @@ export async function runReminderCheck(now = new Date()): Promise<{ sent: number
     const body = `${r.title} is on ${prettyDate(occ)}.` + (r.notes ? ` ${r.notes}` : "");
     await createNotification(r.user_id, { title, body, level: "info" });
     if (r.email) {
-      await sendEmail({ to: r.email, subject: title, text: `${body}\n\n— Aistrology Reminders` });
+      await sendEmail({ to: r.email, subject: title, text: `${body}\n\n— Shastri Reminders` });
     }
     await markReminderNotified(r.id, occ);
     sent++;
@@ -71,7 +71,7 @@ export async function runReminderCheck(now = new Date()): Promise<{ sent: number
     const body = `${s.name} is on ${prettyDate(occ)}.` + (s.description ? ` ${s.description}` : "");
     await createNotification(s.user_id, { title, body, level: "info" });
     if (s.email) {
-      await sendEmail({ to: s.email, subject: title, text: `${body}\n\n— Aistrology Reminders` });
+      await sendEmail({ to: s.email, subject: title, text: `${body}\n\n— Shastri Reminders` });
     }
     await markSubscriptionNotified(s.id, occ);
     sent++;

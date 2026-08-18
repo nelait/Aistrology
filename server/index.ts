@@ -160,7 +160,7 @@ async function start() {
       adminConfigured() ? "admin✓" : "admin✗",
       config.runScheduler ? "scheduler✓" : "scheduler✗(cron)",
     ].join(" ");
-    console.log(`Aistrology API on http://localhost:${config.port}  [${flags}]`);
+    console.log(`Shastri API on http://localhost:${config.port}  [${flags}]`);
     // NEVER log the connection string itself — it carries the password, and
     // deploy logs get copied into chats, issues and screenshots.
     console.log(`Postgres: ${redactDbUrl(config.databaseUrl)}`);

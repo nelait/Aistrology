@@ -98,7 +98,7 @@ const out = (label: string, items: string[]) => {
   console.log(`\n${label}`);
   for (const i of items) console.log(`  • ${i}`);
 };
-console.log("Aistrology deploy check");
+console.log("Shastri deploy check");
 out("Integrations", notes);
 out("⚠ Warnings", warnings);
 out("✖ Errors", errors);

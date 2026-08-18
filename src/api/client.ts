@@ -1,4 +1,4 @@
-// Thin client for the Aistrology API (see server/). Same-origin in dev thanks to
+// Thin client for the Shastri API (see server/). Same-origin in dev thanks to
 // the Vite proxy, so session cookies flow automatically.
 
 import { BirthData } from "../astro/types";

@@ -1,6 +1,6 @@
 # Rate Limiting & Abuse Prevention
 
-Aistrology enforces rate limits at multiple layers to control LLM costs,
+Shastri enforces rate limits at multiple layers to control LLM costs,
 prevent abuse, and protect server resources. All limits run **in-memory**
 (no Redis required) and reset on server restart.
 

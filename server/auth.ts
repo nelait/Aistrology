@@ -139,7 +139,7 @@ async function fetchGoogleProfile(accessToken: string) {
 }
 
 async function fetchGithubProfile(accessToken: string) {
-  const headers = { Authorization: `Bearer ${accessToken}`, "User-Agent": "aistrology" };
+  const headers = { Authorization: `Bearer ${accessToken}`, "User-Agent": "shastri" };
   const r = await fetch(config.providers.github.userUrl, { headers });
   if (!r.ok) throw new Error("Failed to fetch GitHub profile");
   const p = (await r.json()) as { id: number; login: string; name?: string; email?: string; avatar_url?: string };

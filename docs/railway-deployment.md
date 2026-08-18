@@ -1,6 +1,6 @@
 # Deploying to Railway — full runbook
 
-Step-by-step instructions for putting Aistrology on Railway, written **after
+Step-by-step instructions for putting Shastri on Railway, written **after
 doing it**. Every pitfall in [Troubleshooting](#troubleshooting) is one that
 actually occurred, with the log line it produces and the fix.
 
@@ -15,7 +15,7 @@ For the comparison against Render / Cloud Run and the scale-out plan, see
 
 ```
 Railway project
-├── Aistrology   ← your app (API + built SPA, one origin)
+├── Shastri   ← your app (API + built SPA, one origin)
 └── Postgres     ← database (container + volume)
 ```
 
@@ -147,7 +147,7 @@ automatically on the next boot.
 Redeploy and read the startup banner:
 
 ```
-Aistrology API on http://localhost:8080  [google✗ github✗ password✓ dev-login✗ admin✓ scheduler✓]
+Shastri API on http://localhost:8080  [google✗ github✗ password✓ dev-login✗ admin✓ scheduler✓]
 Postgres: postgresql://postgres:****@postgres.railway.internal:5432/railway
 App origin (APP_URL): https://<your-domain>.up.railway.app
 ```

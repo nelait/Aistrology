@@ -1,6 +1,6 @@
 # Promos & Payments
 
-How plans are granted in Aistrology — via **Stripe subscriptions** (paid) or
+How plans are granted in Shastri — via **Stripe subscriptions** (paid) or
 **promo codes** (temporary, admin-issued) — and how the two stay compatible.
 
 ## Plans

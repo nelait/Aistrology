@@ -1,7 +1,7 @@
 {
-  "name": "aistrology",
+  "name": "shastri",
   "version": "1.0.0",
-  "description": "Indian Vedic Astrology application \u2014 compute a birth chart from time and place, learn the theory, get predictions and remedies.",
+  "description": "Shastri — Vedic Astrology, Vastu, Temples & Learning. Compute a birth chart from time and place, learn the theory, get predictions and remedies.",
   "type": "module",
   "scripts": {
     "dev": "vite",

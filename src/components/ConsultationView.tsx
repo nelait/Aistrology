@@ -76,7 +76,7 @@ export default function ConsultationView() {
             <p className="muted">
               Upgrade to <strong>Premium</strong> to publish a provider profile — list your
               specialities, whether that's chart readings, poojas or remedies — and receive booking
-              requests from seekers across Aistrology.
+              requests from seekers across Shastri.
             </p>
           </div>
           <button

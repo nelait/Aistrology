@@ -1,6 +1,6 @@
 # Changing the domain
 
-A reusable checklist for pointing Aistrology at a custom domain — or moving it to
+A reusable checklist for pointing Shastri at a custom domain — or moving it to
 a different one later. Written against Railway, but only steps 2 is
 platform-specific.
 

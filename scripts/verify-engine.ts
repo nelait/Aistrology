@@ -33,7 +33,7 @@ const birth: BirthData = {
 
 const chart = computeChart(birth);
 
-console.log("=== Aistrology engine verification ===");
+console.log("=== Shastri engine verification ===");
 console.log(`Julian Day (UT): ${chart.julianDayUT.toFixed(5)}`);
 console.log(`Ayanamsa (Lahiri): ${fmt(chart.ayanamsa)}  (~23°43' expected for 1990)`);
 console.log(

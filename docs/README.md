@@ -1,6 +1,6 @@
-# Aistrology Documentation
+# Shastri Documentation
 
-Guides for the features and operations of the Aistrology app.
+Guides for the features and operations of the Shastri app.
 
 ## Contents
 
@@ -48,8 +48,8 @@ npm install
 npm run dev:all      # web (Vite, :5173) + API (Express, :8787)
 ```
 
-Requires PostgreSQL running with a database named `aistrology`
-(`createdb aistrology`). Configuration lives in `.env` — copy `.env.example`
+Requires PostgreSQL running with a database named `shastri`
+(`createdb shastri`). Configuration lives in `.env` — copy `.env.example`
 and fill it in. Local sign-in works out of the box via the dev-profile shortcut
 (`ALLOW_DEV_LOGIN=true`); OAuth and Stripe are optional.
 

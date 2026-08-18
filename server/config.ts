@@ -58,7 +58,7 @@ export const config = {
     process.env.LLM_ENC_SECRET ?? process.env.SESSION_SECRET ?? "dev-insecure-secret-change-me",
   // PostgreSQL connection string.
   databaseUrl:
-    process.env.DATABASE_URL ?? "postgres://localhost:5432/aistrology",
+    process.env.DATABASE_URL ?? "postgres://localhost:5432/shastri",
   // A local, provider-less login for development so the signed-in experience is
   // usable without registering OAuth apps. Never enable in production — hence it
   // defaults OFF there and must be opted into explicitly.
