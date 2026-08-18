@@ -84,9 +84,8 @@ body {
    full sentence and should stay on one line wherever it fits. */
 .brand { display: flex; align-items: center; gap: 14px; flex: 0 1 auto; min-width: 0; }
 .logo {
-  font-size: 40px; line-height: 1;
-  background: linear-gradient(135deg, var(--gold), var(--saffron));
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+  width: 44px; height: 44px; border-radius: 10px;
+  object-fit: cover;
   filter: drop-shadow(0 2px 8px rgba(245, 197, 66, 0.35));
 }
 .brand h1 { margin: 0; font-size: 26px; letter-spacing: 0.5px; }
@@ -565,7 +564,7 @@ body {
 @media (max-width: 640px) {
   .app-header { gap: 10px 12px; padding: 12px 4px 10px; }
   .brand { gap: 10px; }
-  .logo { font-size: 30px; }
+  .logo { width: 34px; height: 34px; }
   .brand h1 { font-size: 21px; }
   .tagline { display: none; }
 

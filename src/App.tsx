@@ -250,10 +250,10 @@ export default function App() {
       )}
       <header className="app-header">
         <div className="brand">
-          <span className="logo">☸</span>
+          <img src="/logo.png" alt="Shastri.live" className="logo" />
           <div>
-            <h1>Shastri</h1>
-            <p className="tagline">Understand the sky. Align your space. Honour the ritual.</p>
+            <h1>Shastri.live</h1>
+            <p className="tagline">Jyotish · Vastu · Rituals — one place, one guide.</p>
           </div>
         </div>
         <div className="header-identity">
