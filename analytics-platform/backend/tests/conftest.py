@@ -54,3 +54,5 @@ def _isolated_env(monkeypatch, tmp_path):
     for var in ("AP_CLOUD_PROVIDER", "AP_DATABASE_URL", "AP_DEV_AUTH"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("AP_DATA_DIR", str(tmp_path / "default-data"))
+    # Tests run jobs deterministically with Worker.drain() instead of a background thread.
+    monkeypatch.setenv("AP_INLINE_WORKER", "0")

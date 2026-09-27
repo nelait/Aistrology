@@ -81,7 +81,7 @@ def test_generation_size_and_sync_limits(client):
         "/v1/schemas/parse", json={"format": "json_schema", "content": json.dumps(CUSTOMER_ORDERS_SCHEMA)}, headers=ACME
     ).json()["schema"]
     r = client.post("/v1/generate", json={"schema": schema, "options": {"count": 90_000}}, headers=ACME)
-    assert r.status_code == 422 and "synchronous generation" in r.json()["detail"]
+    assert r.status_code == 202 and r.json()["type"] == "data.generate"  # too big for a sync request → async job
 
 
 def test_generate_and_save_as_dataset(client):

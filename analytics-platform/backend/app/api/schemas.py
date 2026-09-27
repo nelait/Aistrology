@@ -6,17 +6,17 @@ from enum import Enum
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from ..auth.rbac import Permission
 from ..auth.service import Principal
-from ..config import settings
 from ..generation.export import ExportFormat, export_frame, export_zip, to_records
 from ..generation.generator import GenerationError, GenerationOptions, GenerationTooLarge, check_size, generate, plan_counts, preview
+from ..jobs.core import JobService
 from ..llm.router import LLMOutputError, LLMUnavailableError
 from ..schema.json_schema import parse_json_schema
-from ..schema.model import Issue, Schema, SchemaValidationError, to_json_schema, validate_schema
+from ..schema.model import Issue, Schema, SchemaValidationError, ensure_valid, to_json_schema, validate_schema
 from ..schema.natural_language import parse_natural_language
 from ..schema.xsd import parse_xsd
 from .deps import AppState, StateDep, require
@@ -106,13 +106,16 @@ async def generate_preview(body: GenerateRequest, principal: Principal = require
 async def generate_data(body: GenerateRequest, state: AppState = StateDep, principal: Principal = require(Permission.WRITE_DATA)):
     try:
         planned = plan_counts(body.schema_, body.options)
-        if sum(planned.values()) > settings.sync_generation_row_limit:
-            # SCH-NFR-005: large runs belong in the async job system (MT-003), which is not built yet.
-            raise HTTPException(
-                status_code=422,
-                detail=f"synchronous generation is limited to {settings.sync_generation_row_limit:,} rows in total; "
-                f"this request plans {sum(planned.values()):,}. Async generation jobs are coming with MT-003.",
+        if sum(planned.values()) > state.settings.sync_generation_row_limit:
+            # SCH-NFR-005: large runs go to the async job system and are saved as a dataset.
+            ensure_valid(body.schema_)
+            job = JobService(state).submit(
+                principal.tenant_id,
+                "data.generate",
+                {"schema": body.schema_.model_dump(mode="json"), "options": body.options.model_dump(mode="json"), "name": body.save_as},
+                principal.user_id,
             )
+            return JSONResponse(job.model_dump(mode="json"), status_code=202)
         estimate = check_size(body.schema_, body.options)
         frames = generate(body.schema_, body.options)
     except SchemaValidationError as exc:

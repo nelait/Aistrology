@@ -6,8 +6,10 @@ import logging
 
 from fastapi import FastAPI
 
-from .api import auth, datasets, schemas, tenant
+from .api import auth, datasets, jobs, pipelines, schemas, tenant
 from .api.deps import AppState, build_state
+from .jobs import handlers  # noqa: F401 - registers job handlers
+from .jobs.core import Worker
 
 log = logging.getLogger("app")
 
@@ -19,8 +21,14 @@ def create_app(state: AppState | None = None) -> FastAPI:
         description="Schemas & sample data, ingestion, profiling, cleaning, analytics, model training, serving and dashboards.",
     )
     app.state.ap = state or build_state()
-    for module in (auth, tenant, schemas, datasets):
+    for module in (auth, tenant, schemas, datasets, pipelines, jobs):
         app.include_router(module.router)
+
+    if app.state.ap.settings.inline_worker and "worker" not in app.state.ap.extras:
+        # Local mode: run jobs in a background thread of the API process.
+        worker = Worker(app.state.ap, wait_seconds=1.0)
+        worker.start()
+        app.state.ap.extras["worker"] = worker
 
     @app.get("/healthz", tags=["ops"])
     async def healthz() -> dict[str, str]:
