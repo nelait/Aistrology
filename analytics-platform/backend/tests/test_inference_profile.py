@@ -32,8 +32,10 @@ def test_format_and_encoding_detection():
     assert detect_format("x.json", b'[{"a":1}]') == DataFormat.JSON
     assert detect_format("x.json", b'{"a":1}\n{"a":2}\n') == DataFormat.JSONL
     assert detect_format("renamed.csv", b"PAR1....") == DataFormat.PARQUET
-    with pytest.raises(UnsupportedFormatError, match="xls"):
-        detect_format("old.xls", b"\xd0\xcf\x11\xe0rest")
+    # ING-003a: legacy .xls is supported now (converted to Parquet on ingest).
+    assert detect_format("old.xls", b"\xd0\xcf\x11\xe0rest") == DataFormat.XLS
+    with pytest.raises(UnsupportedFormatError, match="archive"):
+        detect_format("nested.zip", b"PK\x03\x04rest")
     assert detect_encoding("naïve".encode()) == "utf-8"
     assert detect_encoding("naïve,café\n".encode("latin-1")) == "latin-1"
     assert detect_encoding(b"\xef\xbb\xbfa,b") == "utf-8-sig"

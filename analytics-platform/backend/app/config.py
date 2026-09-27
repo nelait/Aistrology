@@ -102,6 +102,16 @@ class Settings:
     cost_compute_usd_per_second: float = field(default_factory=lambda: float(_env("AP_COST_COMPUTE_USD_PER_SECOND", "0.0001")))
     cost_storage_usd_per_gb_month: float = field(default_factory=lambda: float(_env("AP_COST_STORAGE_USD_PER_GB_MONTH", "0.023")))
     cost_api_usd_per_1k_requests: float = field(default_factory=lambda: float(_env("AP_COST_API_USD_PER_1K_REQUESTS", "0.01")))
+    # --- connectors (ING-007) ---------------------------------------------
+    # Platform-level SSRF allowlist (hostnames, "*.suffix" or CIDRs). Unlike a tenant admin's
+    # allowlist it may also permit loopback / link-local hosts. Keep empty in multi-tenant production.
+    connector_host_allowlist: tuple[str, ...] = field(
+        default_factory=lambda: tuple(h.strip() for h in (_env("AP_CONNECTOR_HOST_ALLOWLIST", "") or "").split(",") if h.strip())
+    )
+    # SQLite database URLs as a connector source: tests and local development only.
+    connector_allow_sqlite: bool = field(default_factory=lambda: _env("AP_CONNECTOR_ALLOW_SQLITE") == "1")
+    connector_max_rows: int = field(default_factory=lambda: int(_env("AP_CONNECTOR_MAX_ROWS", "10000000")))
+    connector_query_timeout_seconds: int = field(default_factory=lambda: int(_env("AP_CONNECTOR_QUERY_TIMEOUT", "600")))
 
 
 def load_settings() -> Settings:

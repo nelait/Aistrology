@@ -19,6 +19,7 @@ from ..projects import default_project_id
 from ..schema.json_schema import parse_json_schema
 from ..schema.model import Issue, Schema, SchemaValidationError, ensure_valid, to_json_schema, validate_schema
 from ..schema.natural_language import parse_natural_language
+from ..schema.sql_ddl import parse_sql_ddl
 from ..schema.xsd import parse_xsd
 from .deps import AppState, StateDep, require
 
@@ -29,6 +30,7 @@ class SchemaFormat(str, Enum):
     JSON_SCHEMA = "json_schema"
     XSD = "xsd"
     NATURAL_LANGUAGE = "natural_language"
+    SQL_DDL = "sql_ddl"
 
 
 class ParseRequest(BaseModel):
@@ -69,6 +71,8 @@ async def parse_schema(
             schema, warnings = parse_json_schema(body.content)
         elif body.format == SchemaFormat.XSD:
             schema, warnings = parse_xsd(body.content)
+        elif body.format == SchemaFormat.SQL_DDL:
+            schema, warnings = parse_sql_ddl(body.content)
         else:
             schema, warnings = await parse_natural_language(
                 body.content, state.router(principal.tenant_id, "schema.from_text"), current=body.current, actor=principal.user_id
@@ -145,7 +149,7 @@ async def generate_data(body: GenerateRequest, state: AppState = StateDep, princ
         return record.model_dump(mode="json")
     if len(frames) == 1:
         name, frame = next(iter(frames.items()))
-        media = "application/octet-stream" if body.format == ExportFormat.PARQUET else "text/plain"
+        media = {ExportFormat.PARQUET: "application/octet-stream", ExportFormat.XML: "application/xml"}.get(body.format, "text/plain")
         return Response(
             export_frame(name, frame, body.format),
             media_type=media,

@@ -353,3 +353,80 @@ All additions are backward compatible: existing request and response fields keep
   - Returns 202 with the job:
     - `predict` runs `serving.batch_predict`; fetch its result with `GET /v1/endpoints/{name}/batch/{job_id}`.
     - `ingest` runs `inbound.ingest`, which creates the next dataset version with the rows appended (or replacing the contents).
+
+## Phase 2 data layer
+
+### SQL DDL schemas (SCH-004)
+- `POST /v1/schemas/parse` also accepts `format: "sql_ddl"`: `CREATE TABLE` statements (PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, BigQuery, Snowflake).
+  - Column types map to canonical types (`VARCHAR(n)` → `max_length`, `DECIMAL`/`NUMERIC` → number, `ENUM(...)`/`CREATE TYPE … AS ENUM` → enum, `INT[]`/`ARRAY<T>` → array).
+  - `NOT NULL`, `PRIMARY KEY` and `UNIQUE` (inline and table-level), `FOREIGN KEY`/`REFERENCES` (inline, table-level and `ALTER TABLE … ADD FOREIGN KEY`).
+  - `CHECK` with comparisons, `BETWEEN`, `IN (…)`, `= ANY (ARRAY[…])`, OR-ed equalities and `length(col)` → `minimum`/`maximum`/`enum`/`min_length`/`max_length`. `DEFAULT` is ignored.
+  - Errors and warnings carry `path: "line:col"`. Composite keys, unmappable `CHECK`s and unknown statements are warnings.
+
+### Schema history (SCH-010)
+- `POST /v1/schemas` `{name, schema, project_id?, message?, source_format?}` returns `{schema_record, version, created, diff?}`: 201 with a new version when the content changed, 200 with `created: false` when it's identical to the latest version.
+- `GET /v1/schemas?project_id=` lists saved schemas: `[{id, project_id, name, current_version, created_by, created_at, updated_at}]`.
+- `GET /v1/schemas/{id}` (with `versions[]`), `GET /v1/schemas/{id}/versions`, `GET /v1/schemas/{id}/versions/{version}` (with `schema`).
+- `GET /v1/schemas/{id}/diff?from_version=&to_version=` (default: previous → latest). `POST /v1/schemas/diff` `{a, b}` diffs two arbitrary schemas.
+- SchemaDiff: `{identical, added_entities[], removed_entities[], entities: [{name, added_fields[{name,type,nullable}], removed_fields[], retyped_fields[{field, from_type, to_type}], changed_fields[{field, attribute, from, to}]}], breaking, summary[]}`.
+- Project access applies as for datasets (404 when the caller can't see the project).
+
+### Generation options (GEN-006, GEN-009, GEN-008a)
+- `options.distributions`: `{"entity.field": {kind: uniform|normal|lognormal|weights, mean?, std?, sigma?, weights?: {value: weight}}}`. Numeric draws are clipped to the field's `minimum`/`maximum`. `weights` works for enums (keys are enum values) and for categories. Output stays seeded and prefix-stable.
+- `options.anomaly_rate` (0–0.5, default 0): replaces that share of values in non-key fields with edge cases (out-of-range numbers, empty/odd strings, 1900/2099 dates).
+- `format: "xml"` exports `<entity><row><field>…</field></row>…</entity>` (nulls omitted, arrays as `<item>`).
+
+### Uploads (ING-003a, ING-006, CLN-009, INF-004/005)
+- Also accepted: `.xls`, Avro, ORC and XML. These are converted to a Parquet working copy. XML records are the repeated elements, and the first group of repeated child elements becomes one row per child.
+- Compressed uploads: `.gz`, `.zip`, `.tar`, `.tar.gz`/`.tgz`. Each data file in an archive becomes one table of the dataset.
+  - The 1 GB limit applies to the uncompressed size (413).
+  - Compression ratios above 100:1, path traversal, links and nested archives are rejected (422).
+- Non-UTF-8 text (e.g. Windows-1252, Shift-JIS, UTF-16) is transcoded to UTF-8.
+- TableRecord gains `source_format?`, `source_encoding?`, `raw_file?` (the untouched upload, when the table was derived) and `notes[]`. Notes are also added to `inference.warnings`.
+- Multi-table datasets: the inferred schema has one entity per table.
+  - Primary keys are detected per table.
+  - Foreign keys are detected across tables (name similarity plus ≥ 95% value containment).
+  - `inference.relationships` lists `{child_entity, child_field, parent_entity, parent_field, name_score, containment}`. `inference.columns[].table` names each column's table.
+
+### Dataset versions and schema evolution (INF-007, INF-008)
+- `POST /v1/datasets/{id}/versions?mode=append|replace` (multipart `file`) returns `{dataset, previous_version, mode, inference, diff}` (201). The upload becomes the next version.
+  - `append` (default): the file's rows are appended to the matching table (`UNION ALL BY NAME`), and other tables are carried over.
+  - `replace`: only the file's tables are kept.
+- `diff` is a SchemaDiff of the columns (added, removed, retyped, nullability). The new version's schema keeps the previous confirmed definitions and annotations for columns whose type didn't change.
+
+### Column annotations (ANA-010)
+- `GET /v1/datasets/{id}/annotations?version=` returns `{dataset_id, version, annotations: {entity: {field: [pii|sensitive|derived|target|id]}}}`.
+- `PUT /v1/datasets/{id}/annotations` `{columns: {column: [annotation]}, entity?, version?, replace: true}`.
+  - Annotations are stored on the version's schema (`Field.annotations`).
+  - `pii`/`sensitive` also set `pii: true`. Annotations never clear an existing PII flag.
+
+### Advanced profiling (ANA-004a, ANA-005a, ANA-008)
+- `POST /v1/datasets/{id}/profile/advanced?version=&table=` with the body below. Every section is on by default; pass `{enabled: false}` to skip one.
+
+```
+{isolation_forest?: {enabled, contamination: "auto"|0<x≤0.5, n_estimators, max_rows ≤ 200000, columns?, seed},
+ near_duplicates?: {enabled, columns?, threshold: 0.5–1, window, max_rows},
+ missing_patterns?: {enabled, alpha, max_rows, max_columns}}
+```
+
+- Response: `{row_count, isolation_forest?, near_duplicates?, missing_patterns?}`.
+  - `isolation_forest`: `{columns, contamination, sampled_rows, total_rows, outlier_count, outlier_fraction, examples[{row, score, values}]}`. Numeric columns only.
+  - `near_duplicates`: `{columns, threshold, method, rows_scanned, sampled, pair_count, cluster_count, duplicate_rows, examples[{rows, score, values}]}`.
+  - `missing_patterns`: `{heuristic: true, method, rows_analyzed, columns, missing_fraction, co_missingness, indicator_correlation, patterns[{missing_columns, count, fraction}], mechanisms[{column, missing_fraction, label: "MCAR (heuristic)"|"MAR (heuristic)"|"insufficient data", associated_with, min_adjusted_p_value, evidence}]}`.
+- New cleaning step:
+
+| op | Fields |
+|----|--------|
+| `fuzzy_deduplicate` | `columns` (default: all columns except surrogate ids), `threshold` (0.5–1, default 0.9), `window` (blocking, default 10), `keep`: first \| last |
+
+### Connectors (ING-007)
+- `POST /v1/connectors` `{name, kind: s3|gcs|postgresql|mysql, config, credentials}` returns `{id, name, kind, config, created_by, created_at}` (201).
+  - `config`: s3/gcs `{bucket, region?, project?, endpoint_url?}`; databases `{host, port?, database, sslmode?}`.
+  - `credentials`: s3 `{access_key_id, secret_access_key, session_token?}`; gcs `{service_account_json}`; databases `{username, password}`.
+  - Credentials are written to the secret store and never returned.
+- `GET /v1/connectors`, `GET` and `DELETE` on `/v1/connectors/{id}`.
+- `POST /v1/connectors/{id}/import` `{project_id?, name?, key? | prefix?, query?, row_limit?}` returns a job (202). The job's result is `{dataset_id, version, tables[{name, row_count, size_bytes}], warnings[]}`.
+  - Object storage: `key` (one object) or `prefix` (up to 100 objects, one table each).
+  - Databases: `query` must be a single SELECT. It runs in a read-only transaction with a statement timeout, capped at `row_limit` (≤ `AP_CONNECTOR_MAX_ROWS`) and at 1 GB.
+- SSRF guard: hosts resolving to private addresses are rejected (422) unless allowlisted with `GET`/`PUT /v1/connectors/allowlist` `{hosts: [hostname | *.suffix | CIDR]}` (admin only). Loopback, link-local and metadata addresses can only be opened by the platform setting `AP_CONNECTOR_HOST_ALLOWLIST`.
+- `sqlite` connectors exist only for tests and local development (`AP_CONNECTOR_ALLOW_SQLITE=1`). MySQL needs the `connectors` extra (PyMySQL).

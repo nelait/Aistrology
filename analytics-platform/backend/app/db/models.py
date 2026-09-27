@@ -551,4 +551,52 @@ class InboundHook(Base):
     last_triggered_at: Mapped[datetime | None] = mapped_column(TS)
 
 
+# -- Phase 2 data-layer features (additive tables) ----------------------------------------------------
+
+
+class SavedSchema(Base):
+    """A named schema in a project (SCH-010). Its content lives in immutable ``schema_versions`` rows."""
+
+    __tablename__ = "schemas"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("sch"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    current_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(TS, default=utcnow, onupdate=utcnow)
+    __table_args__ = (UniqueConstraint("tenant_id", "project_id", "name"),)
+
+
+class SavedSchemaVersion(Base):
+    __tablename__ = "schema_versions"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("schv"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    schema_id: Mapped[str] = mapped_column(ForeignKey("schemas.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    schema_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    source_format: Mapped[str | None] = mapped_column(String(32))
+    message: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    __table_args__ = (UniqueConstraint("schema_id", "version"),)
+
+
+class Connector(Base):
+    """An external data source (ING-007). Credentials live in the SecretStore under ``secret_name``, never here."""
+
+    __tablename__ = "connectors"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("conn"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(16))  # s3 | gcs | postgresql | mysql
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # non-secret settings (bucket, host, ...)
+    secret_name: Mapped[str] = mapped_column(String(100))
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+
+
 TENANT_TABLES = [t for t in Base.metadata.sorted_tables if "tenant_id" in t.columns and t.name != "tenants"]
