@@ -1,0 +1,45 @@
+[project]
+name = "analytics-platform-backend"
+version = "0.1.0"
+description = "Analytics Platform backend: schemas, sample data, ingestion, profiling, sandboxed SQL, LLM-assisted analytics"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.11",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "duckdb>=1.1",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "pyarrow>=16",
+    "openpyxl>=3.1",
+    "httpx>=0.27",
+    "anthropic>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = [
+    "B008",   # FastAPI dependency defaults
+    "B905",   # zip() over equal-length vectorized draws
+    "E501",   # line length is owned by `ruff format`
+    "UP042",  # (str, Enum) keeps pydantic/JSON behaviour explicit
+]
