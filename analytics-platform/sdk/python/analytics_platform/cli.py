@@ -80,8 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     ds = sub.add_parser("datasets").add_subparsers(dest="action", required=True)
     ds.add_parser("list")
-    up = ds.add_parser("upload")
+    up = ds.add_parser("upload", help="files above 100 MB use resumable uploads automatically")
     up.add_argument("path")
+    up.add_argument("--project-id")
+    up.add_argument("--resumable", action="store_true", help="force the resumable protocol")
+    up.add_argument("--resume", metavar="UPLOAD_ID", help="resume an interrupted resumable upload")
+    up.add_argument("--part-size", type=int, help="bytes per part (resumable)")
     get = ds.add_parser("get")
     get.add_argument("dataset_id")
     prof = ds.add_parser("profile")
@@ -136,7 +140,93 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--out", help="write predictions CSV here (default stdout)")
     met = ep.add_parser("metrics")
     met.add_argument("name")
+    canary = ep.add_parser("canary", help="canary rollouts: start, status, promote, abort")
+    canary.add_argument("name")
+    canary.add_argument("op", choices=["start", "status", "promote", "abort"])
+    canary.add_argument("--model-version-id", help="candidate model version (start)")
+    canary.add_argument("--steps", help="traffic percentages, e.g. 5,25,50,100 (start)")
+    canary.add_argument("--step-minutes", type=float)
+    canary.add_argument("--max-error-rate", type=float)
+    canary.add_argument("--max-p95-ms-increase", type=float)
+    canary.add_argument("--min-requests", type=int)
+    drift = ep.add_parser("drift", help="drift report (PSI); --check queues an alerting drift check")
+    drift.add_argument("name")
+    drift.add_argument("--hours", type=int, default=24)
+    drift.add_argument("--check", action="store_true")
+    drift.add_argument("--wait", action="store_true", help="with --check: wait for the job")
+
+    sch = sub.add_parser("schedules").add_subparsers(dest="action", required=True)
+    sl = sch.add_parser("list")
+    sl.add_argument("--job-type")
+    sch.add_parser("types")
+    for action in ("get", "delete", "pause", "resume"):
+        sch.add_parser(action).add_argument("schedule_id")
+    sc = sch.add_parser("create", help="params JSON: inline, @file.json or - (stdin)")
+    sc.add_argument("name")
+    sc.add_argument("cron", help='5-field cron expression, e.g. "0 6 * * mon-fri"')
+    sc.add_argument("job_type")
+    sc.add_argument("--params", type=_json_arg, default={})
+    sc.add_argument("--timezone", default="UTC")
+    sc.add_argument("--disabled", action="store_true")
+    sr = sch.add_parser("run", help="run a schedule once now")
+    sr.add_argument("schedule_id")
+    sr.add_argument("--wait", action="store_true")
+
+    st = sub.add_parser("streams").add_subparsers(dest="action", required=True)
+    stc = st.add_parser("create")
+    stc.add_argument("name")
+    stc.add_argument("--project-id")
+    sts = st.add_parser("send", help="records: JSON array, @file.json, @file.jsonl or - (stdin, JSON or JSON lines)")
+    sts.add_argument("dataset_id")
+    sts.add_argument("records")
+    st.add_parser("status").add_argument("dataset_id")
+    stk = st.add_parser("compact")
+    stk.add_argument("dataset_id")
+    stk.add_argument("--wait", action="store_true")
     return p
+
+
+def _records_arg(value: str) -> list[dict[str, Any]]:
+    """JSON array / ``{"records": [...]}``, or JSON lines, inline, from @file or from stdin (-)."""
+    text = sys.stdin.read() if value == "-" else Path(value[1:]).read_text() if value.startswith("@") else value
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = [json.loads(line) for line in text.splitlines() if line.strip()]
+    if isinstance(data, dict):
+        data = data.get("records", [data])
+    return data
+
+
+def _upload(ap: Client, args: argparse.Namespace) -> Any:
+    def progress(sent: int, total: int) -> None:
+        print(f"uploaded {sent}/{total} bytes ({sent / total:.0%})", file=sys.stderr)
+
+    if args.resume or args.resumable or args.part_size:
+        return ap.datasets.upload_resumable(
+            args.path, project_id=args.project_id, upload_id=args.resume, part_size=args.part_size, on_progress=progress
+        )
+    return ap.datasets.upload(args.path, project_id=args.project_id, on_progress=progress)
+
+
+def _canary(ap: Client, args: argparse.Namespace) -> Any:
+    if args.op == "status":
+        return ap.endpoints.canary(args.name)
+    if args.op == "promote":
+        return ap.endpoints.canary_promote(args.name)
+    if args.op == "abort":
+        return ap.endpoints.canary_abort(args.name)
+    if not args.model_version_id:
+        raise SystemExit("error: canary start needs --model-version-id")
+    return ap.endpoints.canary_start(
+        args.name,
+        args.model_version_id,
+        steps=[int(s) for s in args.steps.split(",")] if args.steps else None,
+        step_minutes=args.step_minutes,
+        max_error_rate=args.max_error_rate,
+        max_p95_ms_increase=args.max_p95_ms_increase,
+        min_requests=args.min_requests,
+    )
 
 
 def run(argv: list[str] | None = None, client: Client | None = None) -> int:
@@ -159,7 +249,7 @@ def run(argv: list[str] | None = None, client: Client | None = None) -> int:
             _print(
                 {
                     "list": lambda: ap.datasets.list(),
-                    "upload": lambda: ap.datasets.upload(args.path),
+                    "upload": lambda: _upload(ap, args),
                     "get": lambda: ap.datasets.get(args.dataset_id),
                     "profile": lambda: ap.datasets.profile(args.dataset_id),
                     "query": lambda: ap.datasets.query(args.dataset_id, args.sql, args.limit),
@@ -208,8 +298,38 @@ def run(argv: list[str] | None = None, client: Client | None = None) -> int:
                         "deploy": lambda: ap.endpoints.deploy(args.name, args.model_id, args.version),
                         "predict": lambda: ap.endpoints.predict(args.name, args.instances, explain=args.explain),
                         "metrics": lambda: ap.endpoints.metrics(args.name),
+                        "canary": lambda: _canary(ap, args),
+                        "drift": lambda: (
+                            ap.endpoints.drift_check(args.name, args.hours, wait=args.wait)
+                            if args.check
+                            else ap.endpoints.drift(args.name, args.hours)
+                        ),
                     }[action]()
                 )
+        elif cmd == "schedules":
+            _print(
+                {
+                    "list": lambda: ap.schedules.list(args.job_type),
+                    "types": lambda: ap.schedules.types(),
+                    "get": lambda: ap.schedules.get(args.schedule_id),
+                    "create": lambda: ap.schedules.create(
+                        args.name, args.cron, args.job_type, args.params, timezone=args.timezone, enabled=not args.disabled
+                    ),
+                    "run": lambda: ap.schedules.run(args.schedule_id, wait=args.wait),
+                    "pause": lambda: ap.schedules.pause(args.schedule_id),
+                    "resume": lambda: ap.schedules.resume(args.schedule_id),
+                    "delete": lambda: ap.schedules.delete(args.schedule_id) or {"deleted": args.schedule_id},
+                }[action]()
+            )
+        elif cmd == "streams":
+            _print(
+                {
+                    "create": lambda: ap.streams.create(args.name, project_id=args.project_id),
+                    "send": lambda: ap.streams.send(args.dataset_id, _records_arg(args.records)),
+                    "status": lambda: ap.streams.get(args.dataset_id),
+                    "compact": lambda: ap.streams.compact(args.dataset_id, wait=args.wait),
+                }[action]()
+            )
         return 0
     except AnalyticsPlatformError as exc:
         print(f"error: {exc}", file=sys.stderr)

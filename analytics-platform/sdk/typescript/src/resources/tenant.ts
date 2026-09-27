@@ -6,6 +6,11 @@ import type {
   Job,
   LLMConfig,
   LLMUsage,
+  OAuthClient,
+  OAuthClientCreate,
+  OAuthClientWithSecret,
+  RetentionApplyResult,
+  RetentionPolicy,
   Tenant,
   TenantDeletion,
   TenantPatch,
@@ -43,6 +48,37 @@ class ApiKeysResource extends Resource {
   }
   revoke(keyId: string, options?: CallOptions): Promise<void> {
     return this.http.request({ method: "DELETE", path: `/v1/tenant/api-keys/${seg(keyId)}`, ...options });
+  }
+}
+
+/** OAuth 2.0 clients for machine-to-machine access (MGT-004a). */
+class OAuthClientsResource extends Resource {
+  list(options?: CallOptions): Promise<OAuthClient[]> {
+    return this.http.request({ method: "GET", path: "/v1/tenant/oauth-clients", ...options });
+  }
+  /** The `client_secret` is returned only here. */
+  create(body: OAuthClientCreate, options?: CallOptions): Promise<OAuthClientWithSecret> {
+    return this.http.request({ method: "POST", path: "/v1/tenant/oauth-clients", body, ...options });
+  }
+  /** Revoke the client; its tokens stop working immediately. */
+  revoke(clientRowId: string, options?: CallOptions): Promise<void> {
+    return this.http.request({ method: "DELETE", path: `/v1/tenant/oauth-clients/${seg(clientRowId)}`, ...options });
+  }
+}
+
+/** Data retention (SOC-PRV-002, admin only). */
+class RetentionResource extends Resource {
+  get(options?: CallOptions): Promise<RetentionPolicy> {
+    return this.http.request({ method: "GET", path: "/v1/tenant/retention", ...options });
+  }
+  /** Change some periods; the others keep their current values. `audit_days` must be at least 365. */
+  async update(changes: Partial<RetentionPolicy>, options?: CallOptions): Promise<RetentionPolicy> {
+    const current = await this.get(options);
+    return this.http.request({ method: "PUT", path: "/v1/tenant/retention", body: { ...current, ...changes }, ...options });
+  }
+  /** Apply the policy now instead of waiting for the daily sweep. */
+  apply(options?: CallOptions): Promise<RetentionApplyResult> {
+    return this.http.request({ method: "POST", path: "/v1/tenant/retention/apply", ...options });
   }
 }
 
@@ -102,6 +138,8 @@ export class TenantResource extends Resource {
   readonly secrets: SecretsResource;
   readonly audit: AuditResource;
   readonly exports: ExportsResource;
+  readonly oauthClients: OAuthClientsResource;
+  readonly retention: RetentionResource;
 
   constructor(http: HttpClient) {
     super(http);
@@ -111,6 +149,8 @@ export class TenantResource extends Resource {
     this.secrets = new SecretsResource(http);
     this.audit = new AuditResource(http);
     this.exports = new ExportsResource(http);
+    this.oauthClients = new OAuthClientsResource(http);
+    this.retention = new RetentionResource(http);
   }
 
   get(options?: CallOptions): Promise<Tenant> {

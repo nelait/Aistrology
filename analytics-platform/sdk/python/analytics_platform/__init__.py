@@ -1,6 +1,6 @@
 """Python SDK and CLI for the Analytics Platform."""
 
-from .client import Client, verify_webhook_signature
+from .client import Client, ServerSentEvent, parse_sse, verify_webhook_signature
 from .errors import (
     AnalyticsPlatformError,
     ApiError,
@@ -16,6 +16,8 @@ from .errors import (
 
 __all__ = [
     "Client",
+    "ServerSentEvent",
+    "parse_sse",
     "verify_webhook_signature",
     "AnalyticsPlatformError",
     "ApiError",
@@ -28,4 +30,4 @@ __all__ = [
     "ServerError",
     "ValidationError",
 ]
-__version__ = "0.1.0"
+__version__ = "0.2.0"

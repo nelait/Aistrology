@@ -1,4 +1,4 @@
-import type { Job, JobStatus, Notification } from "../types.js";
+import type { Job, JobStatus, Notification, NotificationPreferences } from "../types.js";
 import { JobFailedError, TimeoutError } from "../errors.js";
 import { sleep, throwIfAborted } from "../http.js";
 import { Resource, seg, type CallOptions } from "./base.js";
@@ -60,5 +60,14 @@ export class NotificationsResource extends Resource {
 
   markRead(notificationId: string, options?: CallOptions): Promise<void> {
     return this.http.request({ method: "POST", path: `/v1/notifications/${seg(notificationId)}/read`, ...options });
+  }
+
+  /** Notification kinds emailed to the calling user (users only). */
+  preferences(options?: CallOptions): Promise<NotificationPreferences> {
+    return this.http.request({ method: "GET", path: "/v1/notifications/preferences", ...options });
+  }
+
+  setPreferences(body: NotificationPreferences, options?: CallOptions): Promise<NotificationPreferences> {
+    return this.http.request({ method: "PUT", path: "/v1/notifications/preferences", body, ...options });
   }
 }
