@@ -14,7 +14,10 @@ from pydantic import BaseModel, ValidationError
 
 from ..audit import AuditLog
 from ..privacy import redact_text
-from .base import LLMProvider, LLMRequest, LLMResponse, Message, ProviderError
+from .base import LLMProvider, LLMRequest, LLMResponse, Message, ProviderError, ProviderRefusal
+from .health import ERROR, OK, REFUSAL, BreakerConfig, ProviderHealthMonitor
+from .prompts import PromptRegistry
+from .prompts import render as render_prompt
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -150,8 +153,15 @@ class LLMRouter:
         audit: AuditLog,
         cache: ResponseCache | None = None,
         precheck=None,
+        health: ProviderHealthMonitor | None = None,
+        breaker: BreakerConfig | None = None,
+        prompts: PromptRegistry | None = None,
     ):
-        """``precheck(provider)`` may raise ProviderError to skip a provider (e.g. an exhausted quota)."""
+        """``precheck(provider)`` may raise ProviderError to skip a provider (e.g. an exhausted quota).
+
+        ``health`` records per-provider latency/errors/refusals and, with ``breaker.enabled``, skips providers
+        whose circuit is open (LPA-006). ``prompts`` applies tenant/platform prompt overrides (LPA-008).
+        """
         if not providers:
             raise ValueError("at least one provider is required")
         self.tenant_id = tenant_id
@@ -160,10 +170,35 @@ class LLMRouter:
         self.audit = audit
         self.cache = cache
         self.precheck = precheck
+        self.health = health
+        self.breaker = breaker or BreakerConfig()
+        self.prompts = prompts
+
+    def _for_provider(self, request: LLMRequest, provider: LLMProvider) -> LLMRequest:
+        """LPA-008: swap in the effective prompt template (tenant → platform → default) for this provider."""
+        if self.prompts is None or not request.template:
+            return request
+        resolved = self.prompts.resolve(self.tenant_id, request.template, provider.name)
+        if resolved is None or resolved.source == "default":
+            return request
+        return request.model_copy(update={"system": render_prompt(resolved.system, request.template_vars), "template": resolved.ref})
+
+    def _candidates(self) -> list[LLMProvider]:
+        """LPA-006: providers whose circuit is closed or ready for a probe. Never empty: if all are open, try them all."""
+        if self.health is None or not self.breaker.enabled:
+            return self.providers
+        allowed = [p for p in self.providers if self.health.allow(self.tenant_id, p.name, self.breaker)]
+        return allowed or self.providers
+
+    def _record_health(self, provider: LLMProvider, outcome: str, started: float) -> None:
+        if self.health is not None:
+            self.health.record(self.tenant_id, provider.name, outcome, (time.perf_counter() - started) * 1000, self.breaker)
 
     async def complete(self, request: LLMRequest, *, actor: str = "system") -> LLMResponse:
         errors: list[ProviderError] = []
-        for provider in self.providers:
+        original = request
+        for provider in self._candidates():
+            request = self._for_provider(original, provider)
             cache_key = ResponseCache.key(self.tenant_id, provider, request) if self.cache else None
             if cache_key and (hit := self.cache.get(cache_key)):  # type: ignore[union-attr]
                 self._audit(actor, request, hit, outcome="cache_hit")
@@ -171,13 +206,23 @@ class LLMRouter:
             try:
                 if self.precheck is not None:
                     self.precheck(provider)
-                response = await provider.complete(request)
-            except ProviderError as exc:
+            except ProviderError as exc:  # skipped before the call (e.g. quota): not a health signal
                 errors.append(exc)
                 self._audit(actor, request, None, outcome="error", provider=provider, error=str(exc))
                 if not exc.retryable:
                     break
                 continue
+            started = time.perf_counter()
+            try:
+                response = await provider.complete(request)
+            except ProviderError as exc:
+                self._record_health(provider, REFUSAL if isinstance(exc, ProviderRefusal) else ERROR, started)
+                errors.append(exc)
+                self._audit(actor, request, None, outcome="error", provider=provider, error=str(exc))
+                if not exc.retryable:
+                    break
+                continue
+            self._record_health(provider, OK, started)
             self.ledger.record(self.tenant_id, response)
             self._audit(actor, request, response, outcome="ok")
             if cache_key:

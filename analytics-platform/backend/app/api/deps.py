@@ -10,6 +10,8 @@ from typing import Any
 from fastapi import Depends, Header, HTTPException, Request
 
 from ..audit import DbAuditLog
+from ..auth.network import network_allows
+from ..auth.oauth import OAuthService, is_oauth_token
 from ..auth.rbac import Permission, Role, has_permission
 from ..auth.service import AuthError, AuthService, Principal
 from ..cloud.base import Cloud
@@ -25,6 +27,9 @@ from ..metering import DbUsageLedger, Metering
 from ..quotas import QuotaExceededError, check_platform_llm_quota
 from ..ratelimit import RateLimiter
 from ..storage.datasets import TENANT_ID_RE, DatasetStore
+
+# Principals whose permissions may be narrowed by scopes (MGT-001 API keys, MGT-004a OAuth clients).
+SCOPED_METHODS = ("api_key", "oauth_client")
 
 
 @dataclass
@@ -83,6 +88,12 @@ class AppState:
 
     def router(self, tenant_id: str, task: str | None = None) -> LLMRouter:
         """The tenant's LLM router. ``task`` selects a per-task model for the primary provider (LPA-009)."""
+        from ..consent import LLMConsentRequired, check_llm_consent
+
+        try:
+            check_llm_consent(self, tenant_id)  # SEC-003 / SOC-PRV-005: enforced centrally for every LLM feature
+        except LLMConsentRequired as exc:
+            raise HTTPException(status_code=409, detail={"code": "llm_consent_required", "message": str(exc)}) from exc
         if tenant_id in self.router_overrides:
             return self.router_overrides[tenant_id]
         config = self.llm_config(tenant_id)
@@ -114,6 +125,36 @@ class AppState:
             audit=self.audit,
             cache=self.cache if config.cache_enabled else None,
             precheck=precheck,
+            health=self.llm_health,  # LPA-006
+            breaker=self.breaker_config(tenant_id),
+            prompts=self.prompts,  # LPA-008
+        )
+
+    # -- Phase 2 platform services (LPA-006, LPA-008) ------------------------------------------------
+    @property
+    def llm_health(self):
+        from ..llm.health import ProviderHealthMonitor
+
+        with self._lock:
+            return self.extras.setdefault("llm_health", ProviderHealthMonitor(window_seconds=self.settings.llm_health_window_seconds))
+
+    @property
+    def prompts(self):
+        from ..llm.prompts import PromptRegistry
+
+        with self._lock:
+            return self.extras.setdefault("prompts", PromptRegistry(self.db))
+
+    def breaker_config(self, tenant_id: str):
+        """The tenant's circuit-breaker setting, defaulting to the platform's (off unless AP_LLM_BREAKER_ENABLED=1)."""
+        from ..llm.health import BreakerConfig
+
+        raw = self.get_setting(tenant_id, "llm_breaker")
+        if raw:
+            return BreakerConfig.model_validate(raw)
+        s = self.settings
+        return BreakerConfig(
+            enabled=s.llm_breaker_enabled, failure_threshold=s.llm_breaker_failures, open_seconds=s.llm_breaker_open_seconds
         )
 
 
@@ -166,6 +207,8 @@ def get_principal(
         if x_api_key or (token and token.startswith("ap_")):
             client_ip = request.client.host if request.client else None
             principal = state.auth.verify_api_key(x_api_key or token, client_ip)  # type: ignore[arg-type]
+        elif token and is_oauth_token(token):  # MGT-004a: client-credentials access token
+            principal = OAuthService(state).verify_token(token)
         elif token:
             principal = state.auth.verify_access_token(token)
         elif state.settings.dev_auth and x_tenant_id:
@@ -179,6 +222,10 @@ def get_principal(
         raise HTTPException(
             status_code=401, detail={"code": exc.code, "message": str(exc)}, headers={"WWW-Authenticate": "Bearer"}
         ) from exc
+    # MGT-007: tenant-level IP allowlist / denylist, for every kind of tenant principal.
+    if not network_allows(state, principal.tenant_id, request.client.host if request.client else None):
+        state.audit.record(principal.tenant_id, principal.user_id, "auth.ip_denied", method=principal.method)
+        raise HTTPException(status_code=403, detail={"code": "ip_denied", "message": "access from this IP address is not allowed"})
     # MGT-002: per-key / per-user rate limit.
     limit = principal.rate_limit_per_minute or 1200
     if not state.rate_limiter.allow(f"{principal.tenant_id}:{principal.user_id}", limit):
@@ -191,7 +238,7 @@ def require(permission: Permission):
     """Dependency factory: the caller must hold ``permission`` (AUTH-002)."""
 
     def _dep(principal: Principal = Depends(get_principal)) -> Principal:
-        if not has_permission(principal.role, permission, principal.scopes if principal.method == "api_key" else None):
+        if not has_permission(principal.role, permission, principal.scopes if principal.method in SCOPED_METHODS else None):
             raise HTTPException(status_code=403, detail=f"missing permission {permission.value}")
         return principal
 

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from .api import auth, dashboards, datasets, jobs, pipelines, projects, schemas, serving, tenant, training
 from .api.deps import AppState, build_state
+from .api.extensions import extension_routers
 from .cors import CorsMiddleware
 from .jobs import handlers  # noqa: F401 - registers job handlers
 from .jobs.core import Worker
@@ -37,6 +38,8 @@ def create_app(state: AppState | None = None) -> FastAPI:
     app.state.ap.extras.setdefault("job_metrics", JOBS)
     for module in (auth, tenant, projects, schemas, datasets, pipelines, jobs, training, serving, dashboards):
         app.include_router(module.router)
+    for extension in extension_routers():  # Phase 2 platform features
+        app.include_router(extension)
 
     if app.state.ap.settings.inline_worker and "worker" not in app.state.ap.extras:
         # Local mode: run jobs in a background thread of the API process.

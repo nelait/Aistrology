@@ -399,4 +399,156 @@ class DriftCounter(Base):
     seen: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
+# -- Phase 2 platform features (additive tables) ------------------------------------------------------
+
+
+class PromptTemplateVersion(Base):
+    """LPA-008: a tenant (or platform-wide, ``tenant_id='platform'``) override of a default prompt template.
+
+    ``provider`` is empty for "any provider", or a provider kind (``anthropic``, ``openai``, ...) for a
+    provider-specific variant. Versions are immutable; deactivating one falls back to the next candidate.
+    """
+
+    __tablename__ = "prompt_template_versions"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("ptv"))
+    tenant_id: Mapped[str] = mapped_column(String(63), index=True)
+    template_id: Mapped[str] = mapped_column(String(100), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    provider: Mapped[str] = mapped_column(String(32), default="")
+    system: Mapped[str] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(String(500))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    __table_args__ = (UniqueConstraint("tenant_id", "template_id", "version"),)
+
+
+class NotificationPreference(Base):
+    """NTF-002: which notification kinds a user receives by email."""
+
+    __tablename__ = "notification_preferences"
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    email_kinds: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(TS, default=utcnow, onupdate=utcnow)
+
+
+class ChatDestination(Base):
+    """NTF-003: a Slack or Teams incoming-webhook destination. The URL is a credential and lives in the secret store."""
+
+    __tablename__ = "chat_destinations"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("chd"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # slack | teams
+    name: Mapped[str] = mapped_column(String(200))
+    host: Mapped[str] = mapped_column(String(255))
+    secret_name: Mapped[str] = mapped_column(String(100))
+    events: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+
+
+class OAuthClient(Base):
+    """MGT-004a: an OAuth 2.0 client-credentials client. Only the SHA-256 of the secret is stored."""
+
+    __tablename__ = "oauth_clients"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("oac"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    client_id: Mapped[str] = mapped_column(String(64), unique=True)
+    secret_hash: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str] = mapped_column(String(32))
+    scopes: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(TS)
+    last_used_at: Mapped[datetime | None] = mapped_column(TS)
+
+
+class PublicLink(Base):
+    """SHR-001a: a revocable, expiring, view-only public link to a dashboard. Only the token's SHA-256 is stored."""
+
+    __tablename__ = "public_links"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("pub"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    # No FK: deleting a dashboard must not be blocked by its links (a link to a missing dashboard resolves to 404).
+    dashboard_id: Mapped[str] = mapped_column(String(40), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(TS)
+    revoked_at: Mapped[datetime | None] = mapped_column(TS)
+
+
+class ScimIdentity(Base):
+    """AUTH-001a: the identity provider's ``externalId`` for a SCIM-provisioned user."""
+
+    __tablename__ = "scim_identities"
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    external_id: Mapped[str | None] = mapped_column(String(255))
+
+
+class Team(Base):
+    """AUTH-004: a group of users inside a tenant; projects can be granted to teams."""
+
+    __tablename__ = "teams"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("team"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+
+
+class TeamMember(Base):
+    __tablename__ = "team_members"
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    added_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+
+
+class ProjectTeam(Base):
+    """AUTH-004: project membership granted to a whole team."""
+
+    __tablename__ = "project_teams"
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), primary_key=True)
+    added_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+
+
+class Consent(Base):
+    """SEC-003 / SOC-PRV-005: a user's consent to a policy version. Withdrawal is recorded, never deleted."""
+
+    __tablename__ = "consents"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("cns"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    role: Mapped[str] = mapped_column(String(32))  # the user's role when consenting
+    policy: Mapped[str] = mapped_column(String(32))  # terms | privacy | llm_processing
+    version: Mapped[str] = mapped_column(String(32))
+    accepted_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    ip: Mapped[str | None] = mapped_column(String(64))
+    withdrawn_at: Mapped[datetime | None] = mapped_column(TS)
+
+
+class InboundHook(Base):
+    """WHK-002: an incoming webhook that triggers batch prediction or dataset ingestion. The secret lives in the secret store."""
+
+    __tablename__ = "inbound_hooks"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("ih"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    action: Mapped[str] = mapped_column(String(16))  # predict | ingest
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {endpoint} | {dataset_id, mode}
+    secret_name: Mapped[str] = mapped_column(String(100))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    last_triggered_at: Mapped[datetime | None] = mapped_column(TS)
+
+
 TENANT_TABLES = [t for t in Base.metadata.sorted_tables if "tenant_id" in t.columns and t.name != "tenants"]

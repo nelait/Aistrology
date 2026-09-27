@@ -38,7 +38,7 @@ async def get_job(job_id: str, state: AppState = StateDep, principal: Principal 
         job = JobService(state).get(principal.tenant_id, job_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="job not found") from exc
-    scopes = principal.scopes if principal.method == "api_key" else None
+    scopes = principal.scopes if principal.method in ("api_key", "oauth_client") else None
     if job.created_by != principal.user_id and not has_permission(principal.role, Permission.READ_DATA, scopes):
         raise HTTPException(status_code=404, detail="job not found")
     return job

@@ -28,6 +28,8 @@ class LLMRequest(BaseModel):
     task: str = "general"
     # Prompt-template id@version, recorded in the audit log (LLM-NFR-003).
     template: str | None = None
+    # Values for the template's ``{{name}}`` placeholders, so a tenant override (LPA-008) can be rendered per provider.
+    template_vars: dict[str, str] = Field(default_factory=dict)
 
 
 class Usage(BaseModel):
