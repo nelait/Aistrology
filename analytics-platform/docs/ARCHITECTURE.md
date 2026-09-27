@@ -32,6 +32,7 @@ flowchart LR
 ```
 
 - **One image, two processes.** The API and the job worker share one container image. The worker pulls job IDs from the queue; the database row is the source of truth for job status, progress and results.
+- **Schedules.** Workers also tick the scheduler (`app/jobs/scheduler.py`, or standalone `python -m app.jobs.scheduler`), which submits due cron schedules as jobs. Each run is claimed with a conditional update of `next_run_at`, so every replica can tick without submitting a run twice.
 - **The cloud is a configuration choice.** `AP_CLOUD_PROVIDER=local|gcp|aws` selects implementations of four interfaces in `app/cloud/base.py`: `ObjectStore`, `SecretStore`, `KeyManager` and `Queue`. No other module imports a cloud SDK. Adding a provider (for example Azure) means implementing those four interfaces plus a branch in `app/cloud/factory.py`. Terraform in `infra/terraform/{modules,envs}/{gcp,aws}` outputs exactly the `AP_*` environment variables the app reads.
 - **Single-node analytics.** Decision D3 caps datasets at 1 GB, so DuckDB, pandas and scikit-learn run inside the API or worker process. There is no Spark.
 

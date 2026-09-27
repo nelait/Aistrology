@@ -113,6 +113,19 @@ class Settings:
     connector_max_rows: int = field(default_factory=lambda: int(_env("AP_CONNECTOR_MAX_ROWS", "10000000")))
     connector_query_timeout_seconds: int = field(default_factory=lambda: int(_env("AP_CONNECTOR_QUERY_TIMEOUT", "600")))
 
+    # --- Phase 3: scheduling & collaboration ------------------------------
+    # Shortest allowed gap between two runs of one schedule.
+    schedule_min_interval_minutes: int = field(default_factory=lambda: int(_env("AP_SCHEDULE_MIN_INTERVAL_MINUTES", "5")))
+    # How often the worker (or ``python -m app.jobs.scheduler``) looks for due schedules; 0 disables it in the worker.
+    scheduler_tick_seconds: float = field(default_factory=lambda: float(_env("AP_SCHEDULER_TICK_SECONDS", "30")))
+    # Links in scheduled deliveries: the web app (dashboards) and the public API (public dashboard links).
+    app_base_url: str = field(default_factory=lambda: (_env("AP_APP_BASE_URL", "http://localhost:3000") or "").rstrip("/"))
+    api_base_url: str = field(default_factory=lambda: (_env("AP_API_BASE_URL", "http://localhost:8000") or "").rstrip("/"))
+    delivery_link_ttl_hours: int = field(default_factory=lambda: int(_env("AP_DELIVERY_LINK_TTL_HOURS", "72")))
+    # ING-008: a stream buffer is compacted into a new dataset version once it holds this many rows or bytes.
+    stream_compact_rows: int = field(default_factory=lambda: int(_env("AP_STREAM_COMPACT_ROWS", "10000")))
+    stream_compact_bytes: int = field(default_factory=lambda: int(_env("AP_STREAM_COMPACT_BYTES", str(16 * 1024 * 1024))))
+
 
 def load_settings() -> Settings:
     return Settings()

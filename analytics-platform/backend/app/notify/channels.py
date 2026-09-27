@@ -27,7 +27,16 @@ if TYPE_CHECKING:  # pragma: no cover
 log = logging.getLogger("app.notify")
 
 # Kinds a user can subscribe to by email ("*" = everything).
-EMAIL_KINDS = {"job.succeeded", "job.failed", "model.registered", "endpoint.deployed", "dataset.version_created", "endpoint.threshold", "*"}
+EMAIL_KINDS = {
+    "job.succeeded",
+    "job.failed",
+    "model.registered",
+    "endpoint.deployed",
+    "dataset.version_created",
+    "endpoint.threshold",
+    "comment.mention",
+    "*",
+}
 CHAT_KINDS = EMAIL_KINDS
 CHAT_KIND_VALUES = ("slack", "teams")
 # Accepted incoming-webhook hosts per chat kind, so a destination can't be pointed at an arbitrary server.

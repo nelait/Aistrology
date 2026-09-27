@@ -27,10 +27,18 @@ SMTP_PASSWORD_SECRET = "smtp-password"
 
 
 @dataclass(frozen=True)
+class Attachment:
+    filename: str
+    content: bytes
+    content_type: str = "application/octet-stream"
+
+
+@dataclass(frozen=True)
 class Email:
     to: str
     subject: str
     body: str
+    attachments: tuple[Attachment, ...] = ()
 
 
 class EmailSender(ABC):
@@ -75,6 +83,9 @@ class SMTPSender(EmailSender):
         msg = EmailMessage()
         msg["From"], msg["To"], msg["Subject"] = self.from_addr, email.to, email.subject
         msg.set_content(email.body)
+        for a in email.attachments:
+            maintype, _, subtype = a.content_type.partition("/")
+            msg.add_attachment(a.content, maintype=maintype, subtype=subtype or "octet-stream", filename=a.filename)
         with self.smtp_class(self.host, self.port, timeout=self.timeout) as smtp:
             smtp.ehlo()
             smtp.starttls(context=ssl.create_default_context())  # never send credentials or content in clear text

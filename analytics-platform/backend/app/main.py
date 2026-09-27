@@ -48,7 +48,10 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     if app.state.ap.settings.inline_worker and "worker" not in app.state.ap.extras:
         # Local mode: run jobs in a background thread of the API process.
-        worker = Worker(app.state.ap, wait_seconds=1.0)
+        from .jobs.scheduler import Scheduler
+
+        tick = app.state.ap.settings.scheduler_tick_seconds
+        worker = Worker(app.state.ap, wait_seconds=1.0, scheduler=Scheduler(app.state.ap) if tick > 0 else None, scheduler_interval=tick)
         worker.start()
         app.state.ap.extras["worker"] = worker
 

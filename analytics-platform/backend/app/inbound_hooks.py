@@ -168,9 +168,20 @@ def ingest_job(ctx: JobContext) -> dict:
     from .storage.datasets import DatasetNotFound, DatasetTooLarge, QuotaExceeded
 
     p = ctx.params
+    from .streams import STREAM_SOURCE, NotAStream, StreamError, StreamFull, append_records
+
     try:
         incoming = pd.read_csv(io.BytesIO(ctx.state.objects.get_bytes(ctx.tenant_id, p["input_key"])))
         record = ctx.state.store.get(ctx.tenant_id, p["dataset_id"])
+        if record.source == STREAM_SOURCE:  # ING-008: stream targets buffer the rows as a micro-batch
+            rows = incoming.astype(object).where(incoming.notna(), None).to_dict(orient="records")
+            try:
+                out = {}
+                for start in range(0, len(rows), 10_000):
+                    out = append_records(ctx.state, ctx.tenant_id, record.id, rows[start : start + 10_000], source=ctx.actor)
+            except (NotAStream, StreamError, StreamFull) as exc:
+                raise PermanentJobError(str(exc)) from exc
+            return {**out, "dataset_id": record.id, "rows_added": len(rows), "buffered": True}
         table = record.tables[0].name
         if p.get("mode") == "replace":
             frame = incoming

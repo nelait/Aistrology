@@ -599,4 +599,109 @@ class Connector(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "name"),)
 
 
+# -- Phase 3: scheduling & collaboration (additive tables) --------------------------------------------
+
+
+class Schedule(Base):
+    """A cron schedule that submits a job (USR-007, SHR-004, API-011). ``next_run_at`` is claimed with a conditional
+    UPDATE, so only one scheduler replica submits each run."""
+
+    __tablename__ = "schedules"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("sched"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    cron: Mapped[str] = mapped_column(String(200))
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    job_type: Mapped[str] = mapped_column(String(64))
+    params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(TS, index=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(TS)
+    last_job_id: Mapped[str | None] = mapped_column(String(40))
+    last_status: Mapped[str | None] = mapped_column(String(16))  # submitted | skipped | failed
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)  # bounded snapshot for the UI (USR-007)
+    owner_role: Mapped[str] = mapped_column(String(32))  # the creator's role at creation (dev principals have no user row)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(TS, default=utcnow, onupdate=utcnow)
+
+
+class DashboardComment(Base):
+    """SHR-005: a threaded comment on a dashboard or one of its widgets."""
+
+    __tablename__ = "dashboard_comments"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("cmt"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    dashboard_id: Mapped[str] = mapped_column(String(40), index=True)  # no FK: comments go with the dashboard in the service
+    widget_id: Mapped[str | None] = mapped_column(String(40))
+    parent_id: Mapped[str | None] = mapped_column(String(40), index=True)
+    author_id: Mapped[str] = mapped_column(String(64))
+    body: Mapped[str] = mapped_column(Text)
+    mentions: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    edited_at: Mapped[datetime | None] = mapped_column(TS)
+
+
+class SuggestionPreference(Base):
+    """LLM-009: per-tenant accept/reject counts by suggestion attribute (never shared across tenants)."""
+
+    __tablename__ = "suggestion_preferences"
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
+    dimension: Mapped[str] = mapped_column(String(32), primary_key=True)  # chart_type | category
+    value: Mapped[str] = mapped_column(String(64), primary_key=True)
+    accepted: Mapped[int] = mapped_column(Integer, default=0)
+    rejected: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(TS, default=utcnow, onupdate=utcnow)
+
+
+class SuggestionFeedback(Base):
+    """LLM-009: one accept/reject event (attributes only; no suggestion SQL or data values)."""
+
+    __tablename__ = "suggestion_feedback"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("sfb"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    dataset_id: Mapped[str] = mapped_column(String(40), index=True)
+    user_id: Mapped[str] = mapped_column(String(64))
+    accepted: Mapped[bool] = mapped_column(Boolean)
+    chart_type: Mapped[str] = mapped_column(String(32))
+    category: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+
+
+class StreamState(Base):
+    """ING-008: an append-only stream dataset's buffer counters and compaction settings."""
+
+    __tablename__ = "streams"
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id"), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    buffered_rows: Mapped[int] = mapped_column(BigInteger, default=0)
+    buffered_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    compact_rows: Mapped[int] = mapped_column(Integer, default=10_000)
+    compact_bytes: Mapped[int] = mapped_column(BigInteger, default=16 * 1024 * 1024)
+    compacting_job_id: Mapped[str | None] = mapped_column(String(40))
+    compacting_since: Mapped[datetime | None] = mapped_column(TS)
+    last_compacted_at: Mapped[datetime | None] = mapped_column(TS)
+    total_rows: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+
+
+class StreamBatch(Base):
+    """ING-008: one buffered micro-batch (rows in the encrypted object store) awaiting compaction."""
+
+    __tablename__ = "stream_batches"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("sb"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id"), index=True)
+    object_key: Mapped[str] = mapped_column(String(300))
+    rows: Mapped[int] = mapped_column(Integer)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    source: Mapped[str] = mapped_column(String(64))  # api | inbound:<hook id>
+    claimed_by: Mapped[str | None] = mapped_column(String(40), index=True)  # compaction job id
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+
+
 TENANT_TABLES = [t for t in Base.metadata.sorted_tables if "tenant_id" in t.columns and t.name != "tenants"]
