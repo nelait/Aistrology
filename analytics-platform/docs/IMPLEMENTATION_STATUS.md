@@ -25,7 +25,7 @@ What exists in this repository compared with [REQUIREMENTS.md](REQUIREMENTS.md) 
 | 4. AI-assisted analytics | Sandboxed SQL, multi-dataset queries, LLM suggestions with categories, ranking and feedback learning, join suggestions, saved and parameterized analytics, provider-agnostic LLM layer (Claude, OpenAI, Gemini, OpenAI-compatible) with fallback, circuit breaker, cache, metering and prompt registry | `app/analytics`, `app/llm` |
 | 5. Model training | AutoML with Optuna across linear, tree, boosting (XGBoost, LightGBM, CatBoost), SVM, MLP, clustering, forecasting and anomaly detection; SHAP; fairness; TF-IDF text features; projections; model registry; ONNX export and custom ONNX upload | `app/training` |
 | 6. Dashboards | Chart, KPI, table, text, filter, image, prediction, alert and iframe widgets; cross-filtering; themes and dark mode; templates; sharing roles; public links; sandboxed custom widgets; HTML export and client-side PNG/PDF; comments with @mentions; scheduled delivery | `app/dashboards`, `frontend/src/components/dashboard` |
-| 7. Integration and API gateway | REST endpoints with A/B splits, canary rollouts, batch, SSE and WebSocket streaming, drift, gRPC and GraphQL; API keys, OAuth client credentials, IP rules, quotas; outgoing and incoming webhooks; Python and TypeScript SDKs, `ap` CLI | `app/serving`, `app/api`, `sdk/` |
+| 7. Integration and API gateway | REST endpoints with A/B splits, canary rollouts, batch, SSE and WebSocket streaming, drift, gRPC and GraphQL; API keys, OAuth client credentials, IP rules, quotas; outgoing and incoming webhooks; Python and TypeScript SDKs (SSE, WebSocket, OAuth client credentials, resumable uploads), `ap` CLI, Swift/Kotlin/Dart mobile SDKs | `app/serving`, `app/api`, `sdk/` |
 | Cross-cutting | Configurable cloud (`AP_CLOUD_PROVIDER=local\|gcp\|aws`), per-tenant envelope encryption with crypto-shredding, Postgres RLS, argon2, MFA, OIDC SSO, SCIM, teams, projects, hash-chained audit log, consent, per-tenant retention policies with a daily sweep (SOC-PRV-002), Prometheus metrics, OpenTelemetry, cost attribution, cron scheduler | `app/cloud`, `app/auth`, `app/audit.py`, `app/observability.py`, `app/jobs` |
 | Delivery | Docker and Compose, Helm chart (API, worker, HPA, PDB, NetworkPolicy), Terraform for GCP (GKE, Cloud SQL, GCS, KMS, Pub/Sub) and AWS (EKS, RDS, S3, KMS, SQS), GitHub Actions CI | `deploy/`, `infra/terraform`, `.github/workflows` |
 
@@ -41,7 +41,7 @@ What exists in this repository compared with [REQUIREMENTS.md](REQUIREMENTS.md) 
 | WDG-003a | Inline editing in data tables (P2) | ⛔ | |
 | TRN-004a, TRN-007a, CFG-005 | RNN/LSTM, tabular transformers, N-BEATS, GPU and distributed training (P2) | ⛔ | Needs a GPU node pool and a separate training image. |
 | CFG-004 | Maximum memory per training job | 🟡 | Time budgets and early stopping are enforced in-process. The memory limit comes from the worker pod's Kubernetes limits, not per job. |
-| SDK-003/004/005 | Swift, Kotlin, Dart SDKs | 🟡 | See `sdk/*/README.md` for which were compiled and tested in CI. |
+| SDK-003 | Swift SDK | 🟡 | Built and tested on Linux (Swift 6.0.3, XCTest). `KeychainTokenStore` needs Apple's Security framework, so it is compiled only by the macOS CI job. |
 | MT-005a, OQ-2 | Billing | ⛔ | Blocked on the open pricing decision. Usage metering and cost attribution exist as its input. |
 | OQ-4, SEC-002 | Multi-region deployment | 🟡 | Tenants carry a `us`/`eu` region, and Terraform is per region. Routing between regional stacks is not built. |
 | MT-002 | Horizontal scaling | 🟡 | API and workers are stateless and scale with the HPA. The LLM circuit breaker, stream tokens and webhook replay protection are per process; a shared Redis would make them global. |
@@ -56,6 +56,7 @@ The CI workflow runs all of these on every push touching `analytics-platform/`:
 - backend: `ruff check`, `ruff format --check`, `pytest`
 - frontend: lint, typecheck, vitest, `next build`
 - Python and TypeScript SDK tests, including an end-to-end test against the real backend
+- Kotlin (`gradle build`), Swift (Linux and macOS) and Dart (`dart analyze`, `dart test`) SDK builds and tests
 - Helm lint and `terraform validate`
 
 MVP acceptance criteria 1 (a 30-minute journey with a real user) and 8 (500 RPS load test) need a deployed environment. They are not covered by the unit and integration suites.

@@ -17,7 +17,7 @@ An AI-assisted, multi-tenant SaaS analytics platform. It takes raw data through 
 |------|----------|
 | [`backend/`](backend/) | Python 3.11 · FastAPI · DuckDB · pandas · scikit-learn/XGBoost/LightGBM/CatBoost · SQLAlchemy (SQLite for dev, Postgres with row-level security in production) |
 | [`frontend/`](frontend/) | Next.js · TypeScript · Tailwind · ECharts |
-| [`sdk/`](sdk/) | Python SDK plus `ap` CLI, TypeScript SDK, mobile SDKs |
+| [`sdk/`](sdk/) | Python SDK plus `ap` CLI, TypeScript SDK, and Swift, Kotlin and Dart mobile SDKs |
 | [`deploy/`](deploy/) | Dockerfile, Docker Compose, Helm chart (API, worker, retention CronJob) |
 | [`infra/terraform/`](infra/terraform/) | GCP (GKE, Cloud SQL, GCS, Cloud KMS, Pub/Sub, Secret Manager) and AWS (EKS, RDS, S3, KMS, SQS, Secrets Manager) |
 
@@ -69,6 +69,9 @@ cd backend && ruff check . && ruff format --check . && pytest -q
 cd frontend && npm run lint && npx tsc --noEmit && npm test && npm run build
 cd sdk/python && pytest -q
 cd sdk/typescript && npm test
+cd sdk/kotlin && gradle build
+cd sdk/swift && swift test
+cd sdk/dart && dart analyze && dart test
 ```
 
 ## Design notes
