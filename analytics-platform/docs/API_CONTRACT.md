@@ -430,3 +430,81 @@ All additions are backward compatible: existing request and response fields keep
   - Databases: `query` must be a single SELECT. It runs in a read-only transaction with a statement timeout, capped at `row_limit` (≤ `AP_CONNECTOR_MAX_ROWS`) and at 1 GB.
 - SSRF guard: hosts resolving to private addresses are rejected (422) unless allowlisted with `GET`/`PUT /v1/connectors/allowlist` `{hosts: [hostname | *.suffix | CIDR]}` (admin only). Loopback, link-local and metadata addresses can only be opened by the platform setting `AP_CONNECTOR_HOST_ALLOWLIST`.
 - `sqlite` connectors exist only for tests and local development (`AP_CONNECTOR_ALLOW_SQLITE=1`). MySQL needs the `connectors` extra (PyMySQL).
+
+## Phase 3: scheduling & collaboration
+
+### Schedules
+- A schedule runs an allowlisted job type on a 5-field cron expression (`minute hour day-of-month month day-of-week`; `*`, ranges, lists, steps, `jan`–`dec`, `sun`–`sat`). The expression is evaluated in an IANA `timezone` (default `UTC`).
+  - A wall time skipped by a DST change doesn't run that day. A repeated wall time runs once.
+  - Runs must be at least `AP_SCHEDULE_MIN_INTERVAL_MINUTES` apart (default 5), otherwise 422.
+- `GET /v1/schedules/types` returns `[{job_type, permission, description, allowed}]`:
+
+| job_type | Permission | params |
+|----------|------------|--------|
+| `analytics.scheduled_run` | analytics.create | `{analytic_id, params?, filters?, row_limit? ≤ 10000, recipients?: [user_id], chat_destinations?: [destination_id]}` |
+| `dashboard.deliver` | dashboards.edit | `{dashboard_id, filters?, recipients?, chat_destinations?, public_link?: true}` |
+| `serving.drift_check` | endpoints.deploy | `{endpoint?, hours?: 1–2160}` |
+| `stream.compact` | data.write | `{dataset_id}` (a stream) |
+| `dataset.profile` | data.write | `{dataset_id}` |
+| `pipeline.apply` | pipelines.edit | `{pipeline_id}` |
+
+- `POST /v1/schedules` `{name, cron, timezone?, job_type, params, enabled?}` returns the schedule (201): `{id, name, cron, timezone, job_type, params, enabled, next_run_at, last_run_at, last_job_id, last_status, last_error, last_result, created_by, created_at, updated_at, upcoming[5]}`.
+  - 403 without the job type's permission. 422 for an unknown job type, an invalid cron expression or time zone, or invalid params (including datasets, analytics or dashboards the caller can't see).
+- `GET /v1/schedules?job_type=`: admins see every schedule of the tenant, other callers their own. `GET`, `PATCH` (`{name?, cron?, timezone?, params?, enabled?}`) and `DELETE` on `/v1/schedules/{id}` (owner or admin).
+- `POST /v1/schedules/{id}/run` runs the schedule once now and returns `{schedule_id, status: "submitted", job_id}` (202). 429 when a quota refuses the job. 409 when the owner can no longer run it.
+- Jobs run as the schedule's owner. At every run the platform re-checks that the owner still exists, is active and holds the permission; if not, the run is skipped (`last_status: "skipped"`). A run refused by a quota (MT-006) is also skipped and recorded, and the schedule continues on its timetable.
+- Scheduled jobs carry `params.schedule_id` and `params.trigger` (`schedule` | `manual`).
+- Execution: the worker checks for due schedules every `AP_SCHEDULER_TICK_SECONDS` (default 30; 0 disables). `python -m app.jobs.scheduler` runs the same loop standalone. Each run is claimed with a conditional update of `next_run_at`, so any number of replicas can tick safely.
+
+### Scheduled analytics and dashboard snapshots (USR-007, SHR-004)
+- Recipients are user ids of the tenant (never free-form addresses). Each recipient must be able to see the analytic's dataset or the dashboard, both when the schedule is saved (422 otherwise) and at delivery (otherwise that recipient is skipped). `chat_destinations` are the tenant's Slack / Teams destinations (NTF-003).
+- `analytics.scheduled_run` runs the saved analytic with its params.
+  - Each recipient gets an email with the result as a CSV attachment. Attachments are limited to 10 MB; larger results are sent without the attachment and with a note.
+  - Each chat destination gets a summary: row count, columns and the first 5 rows.
+  - The schedule's `last_result` holds a snapshot for the UI: `{kind: "analytic", analytic_id, name, job_id, columns, rows (≤ 50), row_count, truncated, at}`.
+- `dashboard.deliver` renders the HTML snapshot (as `POST /v1/dashboards/{id}/export`) and emails it as an attachment.
+  - Chat destinations get a link: a public link valid for `AP_DELIVERY_LINK_TTL_HOURS` (default 72) when public links are enabled and the owner can edit the dashboard, otherwise `AP_APP_BASE_URL/dashboards/{id}`.
+  - `last_result`: `{kind: "dashboard", dashboard_id, name, job_id, size_bytes, link_kind: "public" | "app", at}`.
+- The job result is `{…, emails_queued, chat_posts_queued, skipped_targets}`. Emails are sent by `delivery.email` jobs, one per recipient with retries. These jobs, like other delivery jobs, don't emit `job.*` notifications.
+
+### Comments (SHR-005)
+- `GET /v1/dashboards/{id}/comments?widget_id=&include_resolved=true` returns threads, oldest first: `[{id, dashboard_id, widget_id, parent_id: null, author_id, body, mentions, resolved, created_at, edited_at, replies: [comment]}]`.
+- `POST /v1/dashboards/{id}/comments` `{body (1–5000 chars), widget_id?, parent_id?}` returns the comment (201).
+  - Threads are one level deep: a reply to a reply is attached to the root, and replies inherit the root's `widget_id`.
+  - `@<user_id>` mentions notify the mentioned user with `comment.mention` (in-app, plus email / chat per NTF-002/003; the notification doesn't include the comment text). Only active users of the tenant who can view the dashboard are notified.
+- `PATCH /v1/dashboards/{id}/comments/{comment_id}` `{body?, resolved?}`.
+  - Only the author can edit the body. Users mentioned for the first time in the edit are notified.
+  - The author, the dashboard's owner or editors, and admins can resolve or reopen.
+- `DELETE /v1/dashboards/{id}/comments/{comment_id}`: the author or an admin. Deleting a root comment deletes its replies.
+- Anyone who can view the dashboard can read and write comments (permission `view`). For everyone else the comments are 404.
+
+### Multi-dataset analytics (LLM-008)
+- `POST /v1/analytics/query` `{datasets: {alias: dataset_id} (1–5), sql, row_limit?}` returns a QueryResult.
+  - Each dataset must be visible to the caller (404 otherwise) and single-table (400 otherwise). It is loaded into the sandbox as a table named by its alias.
+  - Aliases match `^[a-z_][a-z0-9_]{0,39}$` and can't be SQL keywords (422).
+  - The SQL rules are the same as for `/v1/datasets/{id}/query`.
+- `POST /v1/analytics/suggestions` `{datasets: {alias: dataset_id} (2–5), question?}` returns `{suggestions: [Suggestion], join_candidates: [{left_table, left_column, right_table, right_column, containment}]}`. Needs analytics.create, and every schema must be confirmed (409).
+  - Join candidates are key-like column pairs (`customer_id` ↔ `customers.id`, or equal key names) of compatible types. `containment` is the share of distinct left values found on the right.
+  - The model sees each table's context under the tenant's data-minimization level.
+  - Every suggested query is validated and previewed in the multi-dataset sandbox (`valid`, `validation_error`, `preview`).
+
+### Suggestion feedback and personalization (LLM-009)
+- `POST /v1/datasets/{id}/suggestions/feedback` `{accepted, suggestion: {chart_type, category, title?}}` returns `{preferences, summary}`. Needs analytics.create.
+- `GET /v1/suggestions/preferences` returns `{preferences: {chart_type: {value: {accepted, rejected}}, category: {…}}, summary}`. `DELETE /v1/suggestions/preferences` resets them (admin, 204).
+- Only chart types and categories are learned, per tenant; nothing is shared across tenants.
+  - After at least 3 feedback events, a one-sentence summary (enum values only, no PII) is added to the suggestion prompt as `<preferences>` data.
+  - Suggestions from both suggestion endpoints are re-ranked: valid ones first, then by smoothed acceptance rate.
+
+### Streaming ingestion (ING-008)
+- `POST /v1/streams` `{name, project_id?, columns?, compact_rows?, compact_bytes?}` creates an append-only stream dataset (`source: "stream"`) and returns its DatasetRecord (201). Needs data.write.
+- `POST /v1/streams/{dataset_id}/records` accepts `{"records": [{...}]}` or `[{...}]`, returns `{dataset_id, accepted, buffered_rows, buffered_bytes, compaction_job_id?}` (202).
+  - Needs data.write, for example an API key with that scope.
+  - Up to 10,000 flat JSON objects and 10 MB per call. Values must be strings, numbers, booleans or null (422 otherwise).
+  - Records are buffered in the encrypted object store.
+- Compaction: the `stream.compact` job folds the buffer into the next immutable version.
+  - It is queued automatically once the buffer holds `compact_rows` rows (default `AP_STREAM_COMPACT_ROWS`, 10,000) or `compact_bytes` bytes (default `AP_STREAM_COMPACT_BYTES`, 16 MB).
+  - `POST /v1/streams/{dataset_id}/compact` queues it on demand and returns the job, or the job already in flight. It can also be scheduled (job type `stream.compact`).
+  - Columns whose values mix kinds across batches are stored as strings.
+- `GET /v1/streams/{dataset_id}` returns `{dataset_id, name, version, stored_bytes, stored_rows, buffered_rows, buffered_bytes, buffered_batches, compact_rows, compact_bytes, max_dataset_bytes, compacting_job_id, last_compacted_at}`.
+- An inbound hook (WHK-002, action `ingest`) whose dataset is a stream buffers its rows as a micro-batch instead of writing a version.
+- 1 GB cap: once the stored version plus the buffer would exceed the dataset limit, records are rejected with 413 `{code: "dataset_size_limit", message}`.

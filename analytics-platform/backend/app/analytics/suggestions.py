@@ -129,9 +129,13 @@ async def suggest_analytics(
     *,
     actor: str = "system",
     question: str | None = None,
+    preferences: str | None = None,
 ) -> list[Suggestion]:
     context = build_context(schema, profile, sample, level)
     user = f"<dataset>\n{json.dumps(context, default=str)}\n</dataset>"
+    if preferences:
+        # LLM-009: a short, non-PII summary of this tenant's past accept/reject feedback.
+        user += f"\n\n<preferences>\n{preferences[:1000]}\n</preferences>"
     if question:
         # LLM-006: conversational refinement / USR-002: natural-language analytics.
         user += f"\n\nThe user asks: <question>{question.strip()[:2000]}</question>\nFocus the suggestions on this."
@@ -143,8 +147,12 @@ async def suggest_analytics(
         max_tokens=8000,
     )
     result = await router.complete_json(request, SuggestionSet, actor=actor)
-    # LLM-NFR-007: every generated query is validated and executed in the sandbox before it is shown as usable.
-    for suggestion in result.suggestions:
+    return validate_suggestions(con, result.suggestions)
+
+
+def validate_suggestions(con: duckdb.DuckDBPyConnection, suggestions: list[Suggestion]) -> list[Suggestion]:
+    """LLM-NFR-007: every generated query is validated and executed in the sandbox before it is shown as usable."""
+    for suggestion in suggestions:
         try:
             preview = run_query(con, suggestion.sql, row_limit=200, timeout_seconds=10)
             suggestion.valid = True
@@ -152,4 +160,4 @@ async def suggest_analytics(
         except (UnsafeQueryError, TimeoutError) as exc:
             suggestion.valid = False
             suggestion.validation_error = str(exc)[:500]
-    return result.suggestions
+    return suggestions

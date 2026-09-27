@@ -274,10 +274,23 @@ async def suggestions(
     level = state.llm_config(principal.tenant_id).data_minimization
     sample = await asyncio.to_thread(load_table, state.store, record, None, 20)
     con = await asyncio.to_thread(open_sandbox, sandbox_tables(state.store, record), renames=renames(record))
+    from ..analytics.preferences import preference_stats, rerank
+    from ..analytics.preferences import summary as preference_summary
+
+    stats = preference_stats(state, principal.tenant_id)  # LLM-009: this tenant's feedback only
     try:
-        return await suggest_analytics(
-            llm, con, record.schema_, profile, sample, level, actor=principal.user_id, question=body.question if body else None
+        found = await suggest_analytics(
+            llm,
+            con,
+            record.schema_,
+            profile,
+            sample,
+            level,
+            actor=principal.user_id,
+            question=body.question if body else None,
+            preferences=preference_summary(stats),
         )
+        return rerank(found, stats)
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except LLMOutputError as exc:

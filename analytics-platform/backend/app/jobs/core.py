@@ -156,13 +156,27 @@ def notify(state: AppState, tenant_id: str, user_id: str | None, kind: str, titl
 class Worker:
     """Pulls job messages from the cloud queue and runs them."""
 
-    def __init__(self, state: AppState, *, wait_seconds: float = 5.0):
+    def __init__(self, state: AppState, *, wait_seconds: float = 5.0, scheduler: Any = None, scheduler_interval: float = 30.0):
         self.state = state
         self.wait_seconds = wait_seconds
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # Optional app.jobs.scheduler.Scheduler, ticked every ``scheduler_interval`` seconds from the worker loop.
+        self.scheduler = scheduler
+        self.scheduler_interval = scheduler_interval
+        self._last_tick = 0.0
+
+    def maybe_tick(self) -> None:
+        if self.scheduler is None or time.monotonic() - self._last_tick < self.scheduler_interval:
+            return
+        self._last_tick = time.monotonic()
+        try:
+            self.scheduler.tick()
+        except Exception:  # noqa: BLE001 - scheduling problems must not stop job processing
+            log.exception("scheduler tick failed")
 
     def run_once(self, wait_seconds: float | None = None) -> int:
+        self.maybe_tick()
         messages = self.state.cloud.queue.receive(max_messages=1, wait_seconds=self.wait_seconds if wait_seconds is None else wait_seconds)
         for message in messages:
             retry = self._process(message.body.get("tenant_id"), message.body.get("job_id"))
@@ -228,7 +242,7 @@ class Worker:
         if status in ("succeeded", "failed"):
             self.state.audit.record(tenant_id, "system", f"job.{status}", job_id=job_id, type=job_type, seconds=round(elapsed, 3))
         # Webhook and notification deliveries never notify: a failing delivery would otherwise emit job.failed → another delivery → …
-        if status in ("succeeded", "failed") and not job_type.startswith(("webhook.", "notification.")):
+        if status in ("succeeded", "failed") and not job_type.startswith(("webhook.", "notification.", "delivery.")):
             notify(
                 self.state,
                 tenant_id,

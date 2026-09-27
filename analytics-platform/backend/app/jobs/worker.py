@@ -16,7 +16,12 @@ from .core import Worker
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format='{"level":"%(levelname)s","logger":"%(name)s","msg":"%(message)s"}')
     state = build_state()
-    worker = Worker(state, wait_seconds=10)
+    scheduler = None
+    if state.settings.scheduler_tick_seconds > 0:  # ticks are claimed atomically, so every replica may run one
+        from .scheduler import Scheduler
+
+        scheduler = Scheduler(state)
+    worker = Worker(state, wait_seconds=10, scheduler=scheduler, scheduler_interval=state.settings.scheduler_tick_seconds)
     running = True
 
     def stop(*_):
