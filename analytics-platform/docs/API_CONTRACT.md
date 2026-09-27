@@ -176,3 +176,103 @@ DatasetRecord: `{id, tenant_id, name, version, latest_version, parent_version, p
 - `GET /v1/webhooks`. `DELETE /v1/webhooks/{id}`.
 - `GET /v1/webhooks/{id}/deliveries`. `POST /v1/webhooks/deliveries/{id}/retry`.
 - Deliveries are signed with a header `X-AP-Signature: t=<unix>,v1=<hex hmac-sha256(secret, t + "." + body)>`.
+
+## Phase 2 platform features
+
+### LLM provider health (LPA-006)
+- `GET /v1/tenant/llm-health` (data.read) returns `{window_seconds, breaker, providers: [{provider, requests, errors, refusals, error_rate, refusal_rate, latency_ms: {p50, p95, max}, last_outcome, seconds_since_last, breaker: closed|open|half_open, status: healthy|degraded|unhealthy}]}` over a rolling window.
+- `PUT /v1/tenant/llm-health/breaker` (admin) `{enabled, failure_threshold, open_seconds}`. The circuit breaker is off by default (platform default: `AP_LLM_BREAKER_ENABLED`). When it is on, a provider with `failure_threshold` consecutive errors is skipped for `open_seconds`, then gets one half-open probe. Refusals never trip it, and if every provider is open the chain is tried anyway.
+- `GET /v1/platform/llm-health` (platform operators, `AP_PLATFORM_ADMIN_EMAILS`) returns the same stats aggregated across tenants, plus `open_breakers`.
+
+### Prompt templates (LPA-008)
+- `GET /v1/prompts` returns `[{template_id, description, variables, default: {ref, system}, effective: {ref, source: default|platform|tenant}}]`. The templates are `schema.from_text`, `analytics.suggest` and `model.explain`.
+- `GET /v1/prompts/{template_id}` adds `tenant_versions[]` and `platform_versions[]` (`{ref, version, provider, scope, active, description, system, created_by, created_at}`).
+- `POST /v1/prompts/{template_id}/versions` (admin) `{system, provider?: anthropic|openai|openai_compatible|gemini|mock, description?}` creates a tenant override. It is active immediately and returns `ref` (for example `schema.from_text@2`).
+  - Placeholders are `{{name}}` and must match the template's `variables` exactly.
+  - Resolution order: the tenant's provider-specific version, then the tenant's any-provider version, then the platform's provider-specific version, then the platform's any-provider version, then the shipped default.
+  - The effective `ref` is recorded as `template` in every `llm.call` audit entry.
+- `POST /v1/prompts/{template_id}/versions/{version}/deactivate` or `/activate` (admin).
+- `POST /v1/platform/prompts/{template_id}/versions` (platform operators) creates a platform-wide override.
+
+### Notifications (NTF-002, NTF-003)
+- `GET`/`PUT /v1/notifications/preferences` `{email: [kinds]}` lists the kinds emailed to the calling user. Kinds are `job.succeeded`, `job.failed`, `model.registered`, `endpoint.deployed`, `dataset.version_created`, `endpoint.threshold` and `*`. Only users can call it (API clients get 400).
+- Email goes out from `notification.email` jobs, so requests never wait on SMTP. `AP_EMAIL_SENDER` is `console` (the default), `smtp` or `memory`.
+  - SMTP settings: `AP_SMTP_HOST`, `AP_SMTP_PORT`, `AP_SMTP_USERNAME` and `AP_SMTP_FROM`. The password is the platform secret `smtp-password`.
+  - SMTP always uses STARTTLS with a verified certificate.
+- `POST /v1/tenant/chat-destinations` (admin) `{kind: slack|teams, name, url, events[]}` returns `{id, kind, name, host, events, active, created_at}`.
+  - The incoming-webhook URL is kept in the secret manager and never returned.
+  - It must be https on `hooks.slack.com` (Slack) or `*.webhook.office.com` / `*.logic.azure.com` (Teams), and it passes the webhook SSRF guard.
+  - Posts go out from `notification.chat` jobs with retries.
+- `GET /v1/tenant/chat-destinations`. `DELETE /v1/tenant/chat-destinations/{id}`.
+
+### OAuth 2.0 client credentials (MGT-004a)
+- `POST /v1/tenant/oauth-clients` (endpoints.deploy; admin role needs admin) `{name, role, scopes[]}` returns `{id, client_id, client_secret, role, scopes, token_url, …}`. The secret is shown once and only its hash is stored.
+- `GET /v1/tenant/oauth-clients`. `DELETE /v1/tenant/oauth-clients/{id}` revokes the client; its tokens stop working immediately.
+- `POST /oauth/token` (form-encoded) `grant_type=client_credentials[&scope=a b]`, with credentials via HTTP Basic or `client_id` + `client_secret` fields.
+  - Returns `{access_token, token_type: "bearer", expires_in, scope}` with `Cache-Control: no-store`. The lifetime is `AP_OAUTH_TOKEN_TTL`, 900 s by default.
+  - Errors follow RFC 6749: `{error: invalid_request|invalid_client|unsupported_grant_type|invalid_scope, error_description}`.
+- Use the token as `Authorization: Bearer <access_token>`. `GET /v1/auth/me` shows `method: "oauth_client"`, and scopes narrow the role's permissions exactly like API-key scopes.
+
+### IP allowlist / denylist (MGT-007)
+- `GET`/`PUT /v1/tenant/network-policy` (admin) `{allow: [CIDR], deny: [CIDR]}`.
+  - Deny wins. A non-empty allowlist blocks every other address.
+  - The policy applies to every tenant principal: users, API keys, OAuth clients and SCIM.
+  - Blocked calls get 403 `{detail: {code: "ip_denied"}}`.
+  - A policy that would block the caller's own IP is refused with 409.
+
+### Teams (AUTH-004)
+- `POST /v1/teams` (admin) `{name, description?, members[]}`. `GET /v1/teams`, `GET /v1/teams/{id}` return `{id, name, description, members[], projects[]}`. `DELETE /v1/teams/{id}` (admin).
+- `POST /v1/teams/{id}/members` `{user_id}`. `DELETE /v1/teams/{id}/members/{user_id}` (admin).
+- `POST /v1/projects/{project_id}/teams` `{team_id}` and `DELETE /v1/projects/{project_id}/teams/{team_id}` (admin). Every member of a granted team can see the project.
+
+### SCIM 2.0 provisioning (AUTH-001a)
+- `POST /v1/tenant/scim-token` (admin) returns `{token, base_url: "/scim/v2"}`. The token is shown once, and creating a new one rotates it.
+- `GET /v1/tenant/scim-token` returns `{configured, created_at, created_by}`. `DELETE /v1/tenant/scim-token` revokes it.
+- SCIM calls send `Authorization: Bearer scim_<tenant>_…`:
+  - `GET /scim/v2/ServiceProviderConfig`.
+  - `GET /scim/v2/Users?filter=userName eq "x"|externalId eq "x"&startIndex=&count=` returns a ListResponse.
+  - `GET`, `PUT` and `PATCH` on `/scim/v2/Users/{id}`. PATCH accepts `add`/`replace` on `active`, `displayName`, `name.formatted`, `externalId` and the role.
+  - `POST /scim/v2/Users`.
+  - `DELETE /scim/v2/Users/{id}` disables the user.
+- The role is the custom attribute `urn:ietf:params:scim:schemas:extension:analyticsplatform:2.0:User` `{role}`.
+- Provisioned users have no password; they sign in with SSO.
+- The last active admin can't be disabled or demoted (409, `scimType: mutability`).
+- SAML 2.0 is not implemented yet.
+
+### Public dashboard links (SHR-001a)
+- `POST /v1/dashboards/{id}/public-links` (dashboard editor or owner) `{ttl_hours: 1..8760, default 168}` returns `{id, token, path, expires_at, status, …}`. The token is shown once and only its hash is stored.
+- `GET /v1/dashboards/{id}/public-links` returns `[{id, status: active|expired|revoked, created_by, created_at, expires_at, revoked_at}]`. `DELETE /v1/dashboards/{id}/public-links/{link_id}` revokes a link.
+- Anonymous endpoints, rate-limited per IP:
+  - `GET /v1/public/{token}` returns the dashboard without owner or share lists.
+  - `POST /v1/public/{token}/widgets/{widget_id}/data` `{filters}` returns the same data as signed-in viewers get.
+- `GET`/`PUT /v1/tenant/sharing` (admin) `{public_links_enabled}`. Disabling it immediately stops every existing link.
+
+### Consent (SEC-003, SOC-PRV-005)
+- `POST /v1/consents` `{policy: terms|privacy|llm_processing, version}` records the calling user's consent with a timestamp and IP. Users only; API clients get 400.
+- `GET /v1/consents` lists your consents. `DELETE /v1/consents/{policy}` withdraws consent; the record is kept.
+- `GET /v1/tenant/consents?policy=` (admin) lists consents across the tenant.
+- `GET`/`PUT /v1/tenant/consent-settings` (admin) `{llm_requires_consent, llm_addendum_version}`. The response adds `llm_consent_given`.
+  - While consent is required and no admin has an active `llm_processing` consent at that version, every LLM feature returns 409 `{detail: {code: "llm_consent_required", message}}`.
+
+### Cost attribution (OBS-004)
+- `GET /v1/tenant/costs?start=YYYY-MM-DD&end=YYYY-MM-DD` (admin; defaults to month to date, at most 366 days) returns:
+  - `{start, end, currency: "USD", rates, total_cost_usd}`
+  - `llm: {cost_usd, by_model, input_tokens, output_tokens, unpriced_requests}`
+  - `compute: {seconds, cost_usd, by_job_type}`
+  - `storage: {bytes, gb_months, cost_usd, basis}`
+  - `api: {requests, cost_usd, by_key}`
+- The rates come from `AP_COST_COMPUTE_USD_PER_SECOND`, `AP_COST_STORAGE_USD_PER_GB_MONTH` and `AP_COST_API_USD_PER_1K_REQUESTS`.
+- Storage is the tenant's current stored bytes, prorated over the range.
+
+### Incoming webhooks (WHK-002)
+- `POST /v1/inbound-hooks` (admin) takes one of two bodies:
+  - `{name, action: "predict", endpoint}`
+  - `{name, action: "ingest", dataset_id, mode: append|replace}`
+  - Returns `{id, path: "/hooks/in/{tenant}/{id}", secret, …}`. The secret is shown once.
+- `GET /v1/inbound-hooks`. `DELETE /v1/inbound-hooks/{id}` deactivates the hook and deletes its secret.
+- `POST /hooks/in/{tenant}/{id}` takes no credentials.
+  - The body is `text/csv`, or `application/json` as `[{…}]` or `{rows: [{…}]}`, up to 50 MB.
+  - It must be signed with `X-AP-Signature: t=<unix>,v1=<hex hmac-sha256(secret, t + "." + body)>`, the same scheme as outgoing webhooks. Signatures older than 5 minutes and replays are rejected with 401.
+  - Returns 202 with the job:
+    - `predict` runs `serving.batch_predict`; fetch its result with `GET /v1/endpoints/{name}/batch/{job_id}`.
+    - `ingest` runs `inbound.ingest`, which creates the next dataset version with the rows appended (or replacing the contents).

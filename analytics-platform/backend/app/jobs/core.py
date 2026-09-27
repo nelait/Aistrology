@@ -148,6 +148,9 @@ def notify(state: AppState, tenant_id: str, user_id: str | None, kind: str, titl
     dispatcher = state.extras.get("webhooks")
     if dispatcher is not None:
         dispatcher.emit(tenant_id, kind, {"title": title, **(body or {})})
+    from ..notify.channels import fan_out
+
+    fan_out(state, tenant_id, user_id, kind, title, body or {})  # NTF-002 email / NTF-003 chat, queued as jobs
 
 
 class Worker:
@@ -224,8 +227,8 @@ class Worker:
             counter.labels(job_type, status).inc()
         if status in ("succeeded", "failed"):
             self.state.audit.record(tenant_id, "system", f"job.{status}", job_id=job_id, type=job_type, seconds=round(elapsed, 3))
-        # Webhook deliveries never notify: a failing delivery would otherwise emit job.failed → another delivery → …
-        if status in ("succeeded", "failed") and not job_type.startswith("webhook."):
+        # Webhook and notification deliveries never notify: a failing delivery would otherwise emit job.failed → another delivery → …
+        if status in ("succeeded", "failed") and not job_type.startswith(("webhook.", "notification.")):
             notify(
                 self.state,
                 tenant_id,

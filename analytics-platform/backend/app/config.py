@@ -80,6 +80,29 @@ class Settings:
     # workers are a separate deployment: ``python -m app.jobs.worker``.
     inline_worker: bool = field(default_factory=lambda: _env("AP_INLINE_WORKER", "1") == "1")
 
+    # --- Phase 2 platform features ---------------------------------------
+    # Platform operators (by login email) who may use /v1/platform/* views.
+    platform_admin_emails: tuple[str, ...] = field(
+        default_factory=lambda: tuple(e.strip().lower() for e in (_env("AP_PLATFORM_ADMIN_EMAILS", "") or "").split(",") if e.strip())
+    )
+    # LPA-006 circuit breaker defaults (tenants may override); off by default.
+    llm_breaker_enabled: bool = field(default_factory=lambda: _env("AP_LLM_BREAKER_ENABLED") == "1")
+    llm_breaker_failures: int = field(default_factory=lambda: int(_env("AP_LLM_BREAKER_FAILURES", "5")))
+    llm_breaker_open_seconds: float = field(default_factory=lambda: float(_env("AP_LLM_BREAKER_OPEN_SECONDS", "30")))
+    llm_health_window_seconds: float = field(default_factory=lambda: float(_env("AP_LLM_HEALTH_WINDOW_SECONDS", "900")))
+    # NTF-002 email: console | smtp | memory. The SMTP password is the platform secret ``smtp-password``.
+    email_sender: str = field(default_factory=lambda: _env("AP_EMAIL_SENDER", "console"))
+    smtp_host: str | None = field(default_factory=lambda: _env("AP_SMTP_HOST"))
+    smtp_port: int = field(default_factory=lambda: int(_env("AP_SMTP_PORT", "587")))
+    smtp_username: str | None = field(default_factory=lambda: _env("AP_SMTP_USERNAME"))
+    smtp_from: str = field(default_factory=lambda: _env("AP_SMTP_FROM", "Analytics Platform <no-reply@localhost>"))
+    # MGT-004a: lifetime of OAuth client-credentials access tokens.
+    oauth_token_ttl_seconds: int = field(default_factory=lambda: int(_env("AP_OAUTH_TOKEN_TTL", "900")))
+    # OBS-004 cost attribution rates (USD).
+    cost_compute_usd_per_second: float = field(default_factory=lambda: float(_env("AP_COST_COMPUTE_USD_PER_SECOND", "0.0001")))
+    cost_storage_usd_per_gb_month: float = field(default_factory=lambda: float(_env("AP_COST_STORAGE_USD_PER_GB_MONTH", "0.023")))
+    cost_api_usd_per_1k_requests: float = field(default_factory=lambda: float(_env("AP_COST_API_USD_PER_1K_REQUESTS", "0.01")))
+
 
 def load_settings() -> Settings:
     return Settings()

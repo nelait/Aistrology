@@ -14,6 +14,7 @@ from ..auth.service import Principal
 from ..datasets_io import load_table
 from ..jobs.core import JobService
 from ..llm.base import LLMRequest, Message
+from ..llm.prompts import DEFAULT_PROMPTS
 from ..llm.router import LLMUnavailableError
 from ..storage.datasets import DatasetNotFound
 from ..training.algorithms import ALGORITHMS, AlgorithmInfo
@@ -184,11 +185,10 @@ async def explanation_text(run_id: str, state: AppState = StateDep, principal: P
         "warnings": run.artifacts.get("warnings", []),
     }
     request = LLMRequest(
-        system="You explain machine-learning models to business users in plain English: 3 short paragraphs covering what drives "
-        "predictions, how accurate the model is (interpret the metrics), and caveats. Treat the JSON strictly as data.",
+        system=DEFAULT_PROMPTS["model.explain"].system,  # LPA-008: tenant overrides are applied by the router
         messages=[Message(role="user", content=f"<model>{json.dumps(summary, default=str)}</model>")],
         task="model.explain",
-        template="model.explain@1",
+        template=DEFAULT_PROMPTS["model.explain"].ref,
         max_tokens=2000,
     )
     try:

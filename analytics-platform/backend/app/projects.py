@@ -1,7 +1,8 @@
 """Projects and project-level access (AUTH-003).
 
-* Admins and API keys see every project in the tenant.
-* Other users see open projects (the "Default" project is open) and projects they are members of.
+* Admins, API keys and OAuth clients see every project in the tenant.
+* Other users see open projects (the "Default" project is open), projects they are members of, and
+  projects granted to a team they belong to (AUTH-004).
 * Datasets belong to exactly one project. Everything reached through a dataset id
   (queries, pipelines, experiments, analytics, batch scoring) checks access here.
 """
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import or_, select
 
 from .auth.rbac import Role
-from .db.models import Project, ProjectMember
+from .db.models import Project, ProjectMember, ProjectTeam, TeamMember
 
 if TYPE_CHECKING:  # pragma: no cover
     from .api.deps import AppState
@@ -36,12 +37,18 @@ def default_project_id(state: AppState, tenant_id: str) -> str:
 
 def visible_projects(state: AppState, principal: Principal) -> set[str] | None:
     """None means unrestricted (all projects)."""
-    if principal.role == Role.ADMIN.value or principal.method in ("api_key", "dev"):
+    if principal.role == Role.ADMIN.value or principal.method in ("api_key", "dev", "oauth_client"):
         return None
     with state.db.session(principal.tenant_id) as s:
         member_of = select(ProjectMember.project_id).where(ProjectMember.user_id == principal.user_id)
+        # AUTH-004: membership can also come from a team the user belongs to.
+        my_teams = select(TeamMember.team_id).where(TeamMember.tenant_id == principal.tenant_id, TeamMember.user_id == principal.user_id)
+        via_team = select(ProjectTeam.project_id).where(ProjectTeam.tenant_id == principal.tenant_id, ProjectTeam.team_id.in_(my_teams))
         rows = s.execute(
-            select(Project.id).where(Project.tenant_id == principal.tenant_id, or_(Project.open.is_(True), Project.id.in_(member_of)))
+            select(Project.id).where(
+                Project.tenant_id == principal.tenant_id,
+                or_(Project.open.is_(True), Project.id.in_(member_of), Project.id.in_(via_team)),
+            )
         ).all()
     return {r[0] for r in rows}
 
