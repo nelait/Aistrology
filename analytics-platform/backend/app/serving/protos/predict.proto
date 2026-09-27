@@ -1,0 +1,19 @@
+// API-004: gRPC inference. Served by `python -m app.serving.grpc_server` (default port 50051).
+//
+// Authentication: metadata `x-api-key: ap_live_...` (or `authorization: Bearer <token>`); the key needs the
+// endpoints.predict permission. Messages are google.protobuf.Struct so the schema follows each endpoint's signature:
+//
+//   request  = {endpoint: "churn", instances: [{...}], explain?: bool, horizon?: int, history?: [{...}]}
+//   response = the REST predict response ({predictions, probabilities?, classes?, model_version, ...})
+//
+// Errors map to gRPC status codes: UNAUTHENTICATED, PERMISSION_DENIED, NOT_FOUND, INVALID_ARGUMENT,
+// RESOURCE_EXHAUSTED (rate limit) and INTERNAL.
+syntax = "proto3";
+
+package ap.v1;
+
+import "google/protobuf/struct.proto";
+
+service Predictor {
+  rpc Predict (google.protobuf.Struct) returns (google.protobuf.Struct);
+}

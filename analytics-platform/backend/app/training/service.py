@@ -4,6 +4,7 @@ CFG-007)."""
 from __future__ import annotations
 
 import io
+import logging
 import threading
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
@@ -25,11 +26,16 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..api.deps import AppState
 
 CODE_VERSION = "ap-train-1"
+log = logging.getLogger("app.training.service")
 STAGES = ("none", "staging", "production", "archived")
 
 
 class NotFound(LookupError):
     pass
+
+
+class HoldoutMissing(RuntimeError):
+    """The run predates stored test-set predictions (XAI-004)."""
 
 
 class RunOut(BaseModel):
@@ -161,6 +167,12 @@ class ModelBundle:
         classes = self.signature.get("classes")
         if self.problem_type == "clustering":
             out["predictions"] = [int(v) for v in pred]  # cluster ids; -1 = DBSCAN noise
+        elif self.problem_type == "anomaly":
+            # TRN-008: {is_anomaly, score}; higher scores are more anomalous, flagged above the fitted threshold.
+            scores = np.asarray(self.pipeline.score_samples(X), dtype=float)
+            threshold = float(self.pipeline[-1].threshold_)
+            out["predictions"] = [{"is_anomaly": bool(v > threshold), "score": round(float(v), 6)} for v in scores]
+            out["threshold"] = round(threshold, 6)
         elif classes:
             out["predictions"] = [jsonable(classes[int(i)]) for i in pred]
             if hasattr(self.pipeline, "predict_proba"):
@@ -173,7 +185,7 @@ class ModelBundle:
     def explain(self, instances: list[dict[str, Any]]) -> dict[str, Any]:
         """XAI-002 / XAI-002a / XAI-003: per-instance SHAP contributions on source features, SHAP force-plot data and a
         LIME-style local surrogate (first ``LIME_MAX_INSTANCES`` instances)."""
-        if self.problem_type in ("clustering", "forecasting"):
+        if self.problem_type in ("clustering", "forecasting", "anomaly"):
             raise ValueError(f"explanations are not available for {self.problem_type} models")
         X = self.frame(instances)
         values, base = shap_values(self.pipeline, get_algorithm(self.algorithm), X, self.background, self.problem_type)
@@ -320,8 +332,12 @@ class TrainingService:
                 buf,
             )
             self.state.objects.put_bytes(tenant_id, key, buf.getvalue())
+            holdout_attributes = self._save_holdout(tenant_id, run_id, result, res)
             with self.state.db.session(tenant_id) as s:
-                s.get(Run, run_id).model_key = key
+                run = s.get(Run, run_id)
+                run.model_key = key
+                if holdout_attributes is not None:
+                    run.artifacts = {**run.artifacts, "fairness_attributes": holdout_attributes}
             run_ids.append(run_id)
         best = run_ids[result.best_index]
         self.state.audit.record(
@@ -350,6 +366,107 @@ class TrainingService:
             "warnings": result.warnings,
         }
 
+    def _save_holdout(self, tenant_id: str, run_id: str, result, res) -> list[str] | None:
+        """XAI-004: persist the held-out labels, this run's predictions and candidate protected attributes."""
+        holdout = result.holdout
+        if not holdout or res.holdout_predictions is None:
+            return None
+        attrs = holdout["attributes"]
+        table = pd.DataFrame({f"a:{c}": attrs[c].to_numpy() for c in attrs.columns})
+        table["__row"] = np.asarray(holdout["rows"], dtype=int)
+        table["__y_true"] = np.asarray(holdout["y_true"], dtype=int)
+        table["__y_pred"] = np.asarray(res.holdout_predictions, dtype=int)
+        buf = io.BytesIO()
+        try:
+            for c in table.columns:
+                if table[c].dtype == object:
+                    table[c] = table[c].astype(object).where(table[c].notna(), None).map(lambda v: v if v is None else str(v))
+            table.to_parquet(buf, index=False)
+        except Exception as exc:  # noqa: BLE001 - fairness data is best-effort
+            log.warning("holdout artifact for run %s failed: %s", run_id, exc)
+            return None
+        self.state.objects.put_bytes(tenant_id, f"models/runs/{run_id}/holdout.parquet", buf.getvalue())
+        return list(attrs.columns)
+
+    def fairness(
+        self,
+        tenant_id: str,
+        actor: str,
+        run_id: str,
+        protected: list[str],
+        positive_class: Any = None,
+        min_group_size: int = 10,
+    ) -> dict[str, Any]:
+        """XAI-004: group fairness metrics of a classification run on its held-out test set.
+
+        Attributes come from the stored holdout artifact; any other dataset column (e.g. a PII column not kept at
+        training time) is read from the run's dataset version by row position.
+        """
+        from ..storage.datasets import DatasetNotFound
+        from .fairness import fairness_report
+
+        run = self.get_run(tenant_id, run_id)
+        problem = run.metrics.get("problem_type")
+        if problem not in ("binary", "multiclass"):
+            raise ValueError("fairness analysis needs a classification run")
+        with self.state.db.session(tenant_id) as s:
+            exp = s.get(Experiment, run.experiment_id)
+            dataset_id, version, config = exp.dataset_id, exp.dataset_version, dict(exp.config)
+        try:
+            raw = self.state.objects.get_bytes(tenant_id, f"models/runs/{run_id}/holdout.parquet")
+        except LookupError as exc:
+            raise HoldoutMissing("this run has no stored test-set predictions; retrain it to enable fairness analysis") from exc
+        table = pd.read_parquet(io.BytesIO(raw))
+        attributes = pd.DataFrame({c[2:]: table[c] for c in table.columns if c.startswith("a:")})
+        missing = [p for p in protected if p not in attributes.columns]
+        if missing:
+            try:
+                record = self.state.store.get(tenant_id, dataset_id, version)
+                frame = load_table(self.state.store, record)
+            except DatasetNotFound as exc:
+                raise ValueError(f"attributes {missing} were not stored with the run and its dataset is gone") from exc
+            unknown = [p for p in missing if p not in frame.columns]
+            if unknown:
+                raise ValueError(f"protected attributes must be dataset columns; unknown: {', '.join(unknown)}")
+            target = config.get("target")
+            if target in frame.columns:
+                frame = frame[frame[target].notna()].reset_index(drop=True)
+            rows = table["__row"].to_numpy()
+            if len(frame) <= int(rows.max(initial=0)):
+                raise ValueError("the dataset no longer matches the run's test rows")
+            for p in missing:
+                attributes[p] = frame[p].iloc[rows].reset_index(drop=True)
+        if config.get("target") in protected:
+            raise ValueError("the target can't be a protected attribute")
+        classes = run.metrics.get("classes") or self.load_bundle(tenant_id, run_id).signature.get("classes") or []
+        if positive_class is None:
+            if problem == "binary":
+                positive_index = 1
+            else:
+                counts = np.bincount(table["__y_true"].to_numpy(), minlength=len(classes))
+                positive_index = int(np.argmin(np.where(counts > 0, counts, np.iinfo(np.int64).max)))
+        else:
+            lookup = {str(c): i for i, c in enumerate(classes)}
+            if str(positive_class) not in lookup:
+                raise ValueError(f"positive_class must be one of {classes}")
+            positive_index = lookup[str(positive_class)]
+        reports = fairness_report(
+            table["__y_true"].to_numpy(),
+            table["__y_pred"].to_numpy(),
+            attributes,
+            protected,
+            positive_index,
+            min_group_size=min_group_size,
+        )
+        self.state.audit.record(tenant_id, actor, "model.fairness", run_id=run_id, protected=protected)
+        return {
+            "run_id": run_id,
+            "positive_class": jsonable(classes[positive_index]) if classes else positive_index,
+            "n_test": int(len(table)),
+            "min_group_size": min_group_size,
+            "attributes": reports,
+        }
+
     # -- artifacts -------------------------------------------------------------------------------
     def load_bundle(self, tenant_id: str, run_id: str) -> ModelBundle:
         key = (tenant_id, run_id)
@@ -362,8 +479,14 @@ class TrainingService:
             model_key = s.get(Run, run_id).model_key
         if not model_key:
             raise NotFound(f"run {run.id} has no model artifact")
-        raw = joblib.load(io.BytesIO(self.state.objects.get_bytes(tenant_id, model_key)))
-        bundle = ModelBundle(raw["pipeline"], raw["signature"], raw["background"], raw["algorithm"], raw.get("reference"))
+        if model_key.endswith(".onnx"):
+            # TRN-010 / SEC-010: uploaded models are ONNX + Parquet only; they never go through joblib.
+            from .custom_models import load_uploaded
+
+            bundle = load_uploaded(self.state, tenant_id, model_key, run.artifacts)
+        else:
+            raw = joblib.load(io.BytesIO(self.state.objects.get_bytes(tenant_id, model_key)))
+            bundle = ModelBundle(raw["pipeline"], raw["signature"], raw["background"], raw["algorithm"], raw.get("reference"))
         with self._cache_lock:
             self._cache[key] = bundle
             while len(self._cache) > self.CACHE_SIZE:
@@ -442,7 +565,18 @@ class TrainingService:
                         "algorithm": v.signature.get("algorithm"),
                         "signature": {
                             k: v.signature[k]
-                            for k in ("target", "problem_type", "classes", "features", "time_column", "frequency", "horizon")
+                            for k in (
+                                "target",
+                                "problem_type",
+                                "classes",
+                                "features",
+                                "time_column",
+                                "frequency",
+                                "horizon",
+                                "label_column",
+                                "positive_label",
+                                "source",
+                            )
                             if k in v.signature
                         },
                         "created_at": v.created_at,
@@ -485,7 +619,11 @@ class TrainingService:
         from .onnx_export import export_onnx
 
         bundle = self.load_bundle(tenant_id, run_id)
-        data = export_onnx(bundle.pipeline, bundle.signature, bundle.algorithm)
+        if bundle.algorithm == "onnx_upload":  # TRN-010: an uploaded model downloads as the file that was uploaded
+            with self.state.db.session(tenant_id) as s:
+                data = self.state.objects.get_bytes(tenant_id, s.get(Run, run_id).model_key)
+        else:
+            data = export_onnx(bundle.pipeline, bundle.signature, bundle.algorithm)
         self.state.audit.record(tenant_id, actor, "model.export_onnx", run_id=run_id, bytes=len(data))
         return data
 

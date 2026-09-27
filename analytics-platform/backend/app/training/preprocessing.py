@@ -55,6 +55,20 @@ class PCAConfig(BaseModel):
     n_components: float = Field(default=0.95, gt=0.0, le=1000)
 
 
+class TextFeatures(BaseModel):
+    """FE-006: include free-text columns (otherwise dropped) as TF-IDF features, optionally compressed with TruncatedSVD.
+
+    ``columns`` limits which columns are treated as text; by default every column the schema marks as free text, or
+    whose values look like sentences, is used (identifiers stay dropped).
+    """
+
+    method: Literal["tfidf"] = "tfidf"
+    max_features: int = Field(default=200, ge=2, le=5000)
+    ngram_max: int = Field(default=1, ge=1, le=3)
+    svd_components: int | None = Field(default=None, ge=1, le=500)
+    columns: list[str] | None = None
+
+
 class PreprocessingConfig(BaseModel):
     encoding: Literal["onehot", "ordinal", "target"] = "onehot"
     scaling: Literal["standard", "minmax", "robust", "log", "none"] = "standard"
@@ -63,6 +77,52 @@ class PreprocessingConfig(BaseModel):
     max_categories: int = Field(default=50, ge=2, le=1000)
     auto_features: AutoFeatures | None = None
     pca: PCAConfig | None = None
+    text: TextFeatures | None = None  # FE-006
+
+
+class TextVectorizer(BaseEstimator, TransformerMixin):
+    """FE-006: one free-text column → dense TF-IDF features (``tfidf_<term>``) or their TruncatedSVD projection
+    (``svd<i>``). Missing values are empty strings. Lives inside the served pipeline."""
+
+    def __init__(self, max_features: int = 200, ngram_max: int = 1, svd_components: int | None = None, random_state: int = 0):
+        self.max_features = max_features
+        self.ngram_max = ngram_max
+        self.svd_components = svd_components
+        self.random_state = random_state
+
+    @staticmethod
+    def _docs(X) -> list[str]:
+        arr = np.asarray(X, dtype=object).reshape(-1)
+        return ["" if v is None or (isinstance(v, float) and np.isnan(v)) else str(v) for v in arr]
+
+    def fit(self, X, y=None):
+        from sklearn.feature_extraction.text import TfidfVectorizer
+
+        docs = self._docs(X)
+        self.tfidf_ = TfidfVectorizer(max_features=self.max_features, ngram_range=(1, self.ngram_max), sublinear_tf=True, min_df=1)
+        try:
+            M = self.tfidf_.fit_transform(docs)
+        except ValueError:  # empty vocabulary (no text at all)
+            self.tfidf_ = TfidfVectorizer(analyzer="char", max_features=self.max_features)
+            M = self.tfidf_.fit_transform([d or " " for d in docs])
+        self.svd_ = None
+        if self.svd_components:
+            from sklearn.decomposition import TruncatedSVD
+
+            n = max(1, min(int(self.svd_components), M.shape[1] - 1, M.shape[0] - 1))
+            if M.shape[1] > 1:
+                self.svd_ = TruncatedSVD(n_components=n, random_state=self.random_state).fit(M)
+        self.n_features_in_ = 1
+        return self
+
+    def transform(self, X):
+        M = self.tfidf_.transform(self._docs(X))
+        return self.svd_.transform(M) if self.svd_ is not None else M.toarray()
+
+    def get_feature_names_out(self, input_features=None):
+        if self.svd_ is not None:
+            return np.array([f"svd{i}" for i in range(self.svd_.n_components)], dtype=object)
+        return np.array([f"tfidf_{t}" for t in self.tfidf_.get_feature_names_out()], dtype=object)
 
 
 class PairwiseFeatures(BaseEstimator, TransformerMixin):
@@ -169,9 +229,18 @@ def _log1p_signed(x):
     return np.sign(x) * np.log1p(np.abs(x))
 
 
-def split_features(frame: pd.DataFrame, features: list[str], schema_fields: dict[str, SchemaField]) -> dict[str, list[str]]:
-    """Group features into numeric / categorical / datetime; identifiers and free text are dropped."""
-    groups: dict[str, list[str]] = {"numeric": [], "categorical": [], "datetime": [], "dropped": []}
+def split_features(
+    frame: pd.DataFrame, features: list[str], schema_fields: dict[str, SchemaField], text: TextFeatures | None = None
+) -> dict[str, list[str]]:
+    """Group features into numeric / categorical / datetime; identifiers and free text are dropped, unless ``text``
+    (FE-006) is set: then free-text columns go to the ``text`` group."""
+    groups: dict[str, list[str]] = {"numeric": [], "categorical": [], "datetime": [], "dropped": [], "text": []}
+    if text is not None and text.columns:
+        unknown = [c for c in text.columns if c not in features]
+        if unknown:
+            raise ValueError(f"text columns are not features: {', '.join(unknown)}")
+        groups["text"] = [c for c in features if c in text.columns]
+        features = [c for c in features if c not in text.columns]
     for col in features:
         field = schema_fields.get(col)
         s = frame[col]
@@ -194,7 +263,23 @@ def split_features(frame: pd.DataFrame, features: list[str], schema_fields: dict
                 groups["dropped"].append(col)  # looks like an identifier or free text
             else:
                 groups["categorical"].append(col)
+    if text is not None and not text.columns:
+        for col in list(groups["dropped"]):
+            field = schema_fields.get(col)
+            if (field is not None and field.primary_key) or _ID_NAME_RE.search(col):
+                continue  # keys stay dropped; an inferred "identifier" role on multi-word strings is really free text
+            if (field is not None and field.role == ColumnRole.TEXT) or looks_like_text(frame[col]):
+                groups["dropped"].remove(col)
+                groups["text"].append(col)
     return groups
+
+
+def looks_like_text(s: pd.Series) -> bool:
+    """Free text: string values with, on average, at least three words."""
+    if pd.api.types.is_numeric_dtype(s) or pd.api.types.is_datetime64_any_dtype(s):
+        return False
+    sample = s.dropna().astype(str).head(500)
+    return bool(len(sample)) and float(sample.str.split().str.len().mean()) >= 3.0
 
 
 _ID_NAME_RE = re.compile(r"(^id$|_id$|^id_|uuid|guid|_key$)", re.IGNORECASE)
@@ -272,9 +357,14 @@ def build_preprocessor(groups: dict[str, list[str]], config: PreprocessingConfig
                 groups["datetime"],
             )
         )
+    text_cfg = config.text or TextFeatures()
+    for i, col in enumerate(groups.get("text") or []):
+        # FE-006: one vectorizer per text column (a scalar column selector passes a 1-D column); named text<i>.
+        vec = TextVectorizer(max_features=text_cfg.max_features, ngram_max=text_cfg.ngram_max, svd_components=text_cfg.svd_components)
+        transformers.append((f"text{i}", vec, col))
     if not transformers:
         raise ValueError("no usable features: every selected column is an identifier or free text")
-    return ColumnTransformer(transformers, remainder="drop", verbose_feature_names_out=True)
+    return ColumnTransformer(transformers, remainder="drop", verbose_feature_names_out=True, sparse_threshold=0.0)
 
 
 def clone_scaler(scaler: Any) -> Any:
@@ -396,6 +486,9 @@ def _smote(X, y, classes, counts, rng, k: int = 5):
 def original_features(transformed_name: str, groups: dict[str, list[str]]) -> list[str]:
     """Source columns of a transformed feature; engineered interactions (``fe__a x b``, FE-001) map to both inputs."""
     prefix, _, rest = transformed_name.partition("__")
+    text_match = re.fullmatch(r"text(\d+)", prefix)
+    if text_match and int(text_match.group(1)) < len(groups.get("text") or []):
+        return [groups["text"][int(text_match.group(1))]]  # FE-006: TF-IDF / SVD terms roll up to their column
     if prefix == "fe":
         numeric = sorted(groups.get("numeric", []), key=len, reverse=True)
         if rest.endswith("^2") and rest[:-2] in numeric:

@@ -6,7 +6,7 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -19,9 +19,20 @@ from ..llm.prompts import DEFAULT_PROMPTS
 from ..llm.router import LLMUnavailableError
 from ..storage.datasets import DatasetNotFound
 from ..training.algorithms import AlgorithmInfo, catalog
+from ..training.anomaly import POSITIVE_LABELS
+from ..training.custom_models import MAX_UPLOAD_BYTES, CustomModelService, UploadRejected, UploadSignature
 from ..training.forecasting import detect_time_series
 from ..training.onnx_export import OnnxUnsupported
-from ..training.service import ExperimentOut, NotFound, RunOut, TemplateConflict, TemplateService, TrainingService
+from ..training.projection import ProjectionRequest, project_dataset, project_run
+from ..training.service import (
+    ExperimentOut,
+    HoldoutMissing,
+    NotFound,
+    RunOut,
+    TemplateConflict,
+    TemplateService,
+    TrainingService,
+)
 from ..training.trainer import TrainingConfig, TrainingError, detect_problem_type
 from .deps import AppState, StateDep, guard_dataset, require
 
@@ -54,6 +65,12 @@ class RegisterBody(BaseModel):
 
 class StageBody(BaseModel):
     stage: str
+
+
+class FairnessBody(BaseModel):
+    protected: list[str] = Field(min_length=1, max_length=20)
+    positive_class: Any = None
+    min_group_size: int = Field(default=10, ge=1, le=10_000)
 
 
 class TemplateCreate(BaseModel):
@@ -98,7 +115,12 @@ async def detect(body: DetectBody, state: AppState = StateDep, principal: Princi
     except DatasetNotFound as exc:
         raise _nf(exc) from exc
     if not body.target:
-        return {"problem_type": "clustering", "reason": "no target column: group similar rows into clusters"}
+        return {
+            "problem_type": "clustering",
+            "reason": "no target column: group similar rows into clusters",
+            # MDL-002b: unsupervised anomaly detection is the other target-free option.
+            "alternatives": [{"problem_type": "anomaly", "reason": "no target column: flag unusual rows (anomaly detection)"}],
+        }
     if body.target not in frame.columns:
         raise HTTPException(status_code=422, detail=f"unknown column {body.target!r}")
     try:
@@ -115,7 +137,28 @@ async def detect(body: DetectBody, state: AppState = StateDep, principal: Princi
         series = await asyncio.to_thread(detect_time_series, frame, body.target)
         if series:
             out["alternatives"] = [series]
+    anomaly = _anomaly_hint(frame[body.target]) if problem == "binary" else None
+    if anomaly:
+        out.setdefault("alternatives", []).append(anomaly)
     return out
+
+
+def _anomaly_hint(y) -> dict[str, Any] | None:
+    """MDL-002b: a rare binary label (≤ 5 %, or named like fraud / anomaly / outlier) suggests anomaly detection, with the
+    label used only for evaluation."""
+    counts = y.dropna().astype(str).str.strip().value_counts()
+    if len(counts) != 2:
+        return None
+    minority, share = counts.index[-1], float(counts.iloc[-1] / counts.sum())
+    named = any(str(v).lower() in POSITIVE_LABELS - {"1", "1.0", "true", "yes", "y"} for v in counts.index)
+    if share > 0.05 and not named:
+        return None
+    return {
+        "problem_type": "anomaly",
+        "label_column": y.name,
+        "positive_label": minority,
+        "reason": f"{minority!r} is rare ({share:.1%}); anomaly detection learns what is normal and uses the label only for evaluation",
+    }
 
 
 @router.post("/experiments", status_code=202)
@@ -203,6 +246,78 @@ async def explain(run_id: str, body: ExplainBody, state: AppState = StateDep, pr
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.post("/runs/{run_id}/fairness")
+async def fairness(run_id: str, body: FairnessBody, state: AppState = StateDep, principal: Principal = Reader) -> dict[str, Any]:
+    """XAI-004: selection rate, TPR / FPR and precision per group of each protected attribute on the held-out test set,
+    with demographic parity, equalized odds and the four-fifths rule. Any dataset column can be a protected attribute."""
+    svc = TrainingService(state)
+    try:
+        run = svc.get_run(principal.tenant_id, run_id)
+        exp, _ = svc.get_experiment(principal.tenant_id, run.experiment_id)
+        guard_dataset(state, principal, exp.dataset_id)
+        return await asyncio.to_thread(
+            svc.fairness, principal.tenant_id, principal.user_id, run_id, body.protected, body.positive_class, body.min_group_size
+        )
+    except NotFound as exc:
+        raise _nf(exc) from exc
+    except HoldoutMissing as exc:
+        raise HTTPException(status_code=409, detail={"code": "holdout_missing", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/projection")
+async def run_projection(
+    run_id: str, body: ProjectionRequest | None = None, state: AppState = StateDep, principal: Principal = Reader
+) -> dict[str, Any]:
+    """FE-005a: a 2-D UMAP / t-SNE embedding of (≤ 5k) rows of the run's dataset through the run's fitted
+    preprocessing, coloured by the model's predictions. Visualization only."""
+    body = body or ProjectionRequest()
+    svc = TrainingService(state)
+    try:
+        run = svc.get_run(principal.tenant_id, run_id)
+        exp, _ = svc.get_experiment(principal.tenant_id, run.experiment_id)
+        guard_dataset(state, principal, exp.dataset_id)
+        bundle = await asyncio.to_thread(svc.load_bundle, principal.tenant_id, run_id)
+        if bundle.problem_type == "forecasting":
+            raise HTTPException(
+                status_code=409, detail={"code": "projection_unsupported", "message": "forecasting runs have no row projection"}
+            )
+        record = state.store.get(principal.tenant_id, exp.dataset_id, exp.dataset_version)
+        frame = await asyncio.to_thread(load_table, state.store, record)
+        return await asyncio.to_thread(project_run, bundle, frame, body)
+    except (NotFound, DatasetNotFound) as exc:
+        raise _nf(exc) from exc
+    except TypeError as exc:
+        raise HTTPException(status_code=409, detail={"code": "projection_unsupported", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/datasets/{dataset_id}/projection")
+async def dataset_projection(
+    dataset_id: str,
+    body: ProjectionRequest | None = None,
+    version: int | None = None,
+    state: AppState = StateDep,
+    principal: Principal = Reader,
+) -> dict[str, Any]:
+    """FE-005a: a 2-D UMAP (or t-SNE / PCA) embedding of a sample (≤ 5k rows) of a dataset. PII columns are left out
+    unless listed in ``features``. Visualization only."""
+    body = body or ProjectionRequest()
+    guard_dataset(state, principal, dataset_id)
+    try:
+        record = state.store.get(principal.tenant_id, dataset_id, version)
+        frame = await asyncio.to_thread(load_table, state.store, record)
+    except DatasetNotFound as exc:
+        raise _nf(exc) from exc
+    fields = {f.name: f for f in record.schema_.entities[0].fields} if record.schema_ and record.schema_.entities else {}
+    try:
+        return await asyncio.to_thread(project_dataset, frame, body, fields)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("/runs/{run_id}/onnx")
 async def export_onnx(run_id: str, state: AppState = StateDep, principal: Principal = Reader) -> Response:
     """MDL-NFR-004: download the run's pipeline as ONNX. 409 with the reason when the pipeline isn't convertible."""
@@ -256,6 +371,50 @@ async def register_model(body: RegisterBody, state: AppState = StateDep, princip
     from ..jobs.core import notify
 
     notify(state, principal.tenant_id, None, "model.registered", f"{body.name} v{out['version']} registered", out)
+    return out
+
+
+@router.post("/models/upload", status_code=201)
+async def upload_model(
+    file: UploadFile = File(...),
+    signature: str = Form(...),
+    name: str = Form(..., min_length=1, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"),
+    description: str | None = Form(None, max_length=2000),
+    dataset_id: str | None = Form(None),
+    state: AppState = StateDep,
+    principal: Principal = Trainer,
+) -> dict[str, Any]:
+    """TRN-010 / SEC-010: register an uploaded **ONNX** model (≤ 200 MB) with a JSON ``signature``. The file is checked,
+    loaded in onnxruntime and dry-run on a synthetic row; pickle / joblib are never accepted. ``dataset_id`` (optional)
+    supplies reference rows for drift monitoring and explanations; otherwise synthetic rows from the signature are used."""
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"model file exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+    try:
+        sig = UploadSignature.model_validate_json(signature)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid signature: {exc}") from exc
+    guard_dataset(state, principal, dataset_id)
+    try:
+        out = await asyncio.to_thread(
+            CustomModelService(state).upload,
+            principal.tenant_id,
+            principal.user_id,
+            name=name,
+            description=description,
+            data=data,
+            signature=sig,
+            dataset_id=dataset_id,
+            filename=file.filename,
+        )
+    except DatasetNotFound as exc:
+        raise _nf(exc) from exc
+    except UploadRejected as exc:
+        state.audit.record(principal.tenant_id, principal.user_id, "model.upload_rejected", reason=str(exc)[:300])
+        raise HTTPException(status_code=422, detail={"code": "model_rejected", "message": str(exc)}) from exc
+    from ..jobs.core import notify
+
+    notify(state, principal.tenant_id, None, "model.registered", f"{name} v{out['version']} uploaded", out)
     return out
 
 

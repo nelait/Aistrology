@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-ProblemType = Literal["binary", "multiclass", "regression", "clustering", "forecasting"]
+ProblemType = Literal["binary", "multiclass", "regression", "clustering", "forecasting", "anomaly"]
 CLASSIFICATION = ("binary", "multiclass")
 
 
@@ -519,7 +519,9 @@ def get_algorithm(algorithm_id: str) -> Algorithm:
 
 
 def catalog() -> list[AlgorithmInfo]:
-    """Every algorithm the studio offers: supervised, ensembles, clustering (TRN-006) and forecasting (TRN-007)."""
+    """Every algorithm the studio offers: supervised, ensembles, clustering (TRN-006), forecasting (TRN-007) and
+    anomaly detection (TRN-008)."""
+    from .anomaly import ANOMALY_ALGORITHMS
     from .clustering import CLUSTERING_ALGORITHMS
     from .forecasting import FORECASTING_ALGORITHMS
 
@@ -527,11 +529,18 @@ def catalog() -> list[AlgorithmInfo]:
     out += [a.info() for a in ENSEMBLES.values()]
     out += [a.info() for a in CLUSTERING_ALGORITHMS.values()]
     out += [a.info() for a in FORECASTING_ALGORITHMS.values()]
+    out += [a.info() for a in ANOMALY_ALGORITHMS.values()]
     return out
 
 
 def known_algorithm(algorithm_id: str) -> bool:
+    from .anomaly import ANOMALY_ALGORITHMS
     from .clustering import CLUSTERING_ALGORITHMS
     from .forecasting import FORECASTING_ALGORITHMS
 
-    return algorithm_id in ALGORITHMS or algorithm_id in CLUSTERING_ALGORITHMS or algorithm_id in FORECASTING_ALGORITHMS
+    return (
+        algorithm_id in ALGORITHMS
+        or algorithm_id in CLUSTERING_ALGORITHMS
+        or algorithm_id in FORECASTING_ALGORITHMS
+        or algorithm_id in ANOMALY_ALGORITHMS
+    )

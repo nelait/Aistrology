@@ -45,6 +45,12 @@ def create_app(state: AppState | None = None) -> FastAPI:
         app.include_router(extension)
     for router in (schema_history_router, dataset_extras_router, connectors_router):  # Phase 2 data layer
         app.include_router(router)
+    try:  # Phase 3: GraphQL (API-003)
+        from .api.graphql import graphql_router
+
+        app.include_router(graphql_router(dev=app.state.ap.settings.dev_auth))
+    except ImportError:  # pragma: no cover - strawberry-graphql not installed
+        log.warning("strawberry-graphql is not installed; /graphql is disabled")
 
     if app.state.ap.settings.inline_worker and "worker" not in app.state.ap.extras:
         # Local mode: run jobs in a background thread of the API process.
