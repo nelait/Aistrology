@@ -41,7 +41,12 @@ def batch_predict_job(ctx: JobContext) -> dict:
         except ValueError as exc:
             raise PermanentJobError(str(exc)) from exc
         part = chunk.copy()
-        part["prediction"] = result["predictions"]
+        preds = result["predictions"]
+        if preds and isinstance(preds[0], dict):  # anomaly detection (TRN-008)
+            part["is_anomaly"] = [p["is_anomaly"] for p in preds]
+            part["anomaly_score"] = [p["score"] for p in preds]
+        else:
+            part["prediction"] = preds
         if "probabilities" in result:
             for i, cls in enumerate(result["classes"]):
                 part[f"probability_{cls}"] = [p[i] for p in result["probabilities"]]
@@ -90,6 +95,21 @@ def drift_check_job(ctx: JobContext) -> dict:
             alerts.append(body)
         ctx.progress((i + 1) / max(1, len(names)), f"checked {i + 1}/{len(names)} endpoints")
     return {"checked": checked, "alerts": alerts}
+
+
+@job_handler("serving.canary_step")
+def canary_step_job(ctx: JobContext) -> dict:
+    """API-009: evaluate one canary step (ramp, hold, complete or roll back); re-enqueues itself with a delay."""
+    from .canary import CanaryService
+
+    svc = CanaryService(ctx.state)
+    if ctx.params.get("canary_id"):
+        try:
+            return svc.evaluate(ctx.tenant_id, ctx.params["canary_id"])
+        except NotFound as exc:
+            raise PermanentJobError(f"canary rollout not found: {exc}") from exc
+    # Tick mode (POST /v1/endpoints/canary-steps): every due rollout of the tenant.
+    return {"evaluated": [svc.evaluate(ctx.tenant_id, rid) for rid in svc.due(ctx.tenant_id)]}
 
 
 @job_handler("webhook.deliver")

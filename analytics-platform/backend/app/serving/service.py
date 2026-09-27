@@ -16,7 +16,7 @@ from sqlalchemy import delete, select
 
 from ..db.models import DriftCounter, Endpoint, ModelVersion, PredictionLog, PredictionSample, RegisteredModel
 from ..privacy import redact_text
-from ..training.drift_profile import PSI_ALERT, PSI_WARN, drift_report, token
+from ..training.drift_profile import PSI_ALERT, PSI_WARN, drift_report, prediction_token_value, token
 from ..training.service import ModelBundle, NotFound, TrainingService
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -168,6 +168,10 @@ class ServingService:
         with self.state.db.session(tenant_id) as s:
             ep = self._get(s, tenant_id, name)
             if body.routes is not None:
+                from .canary import CanaryConflict, CanaryService
+
+                if CanaryService(self.state).running_for(tenant_id, ep.id):
+                    raise CanaryConflict("a canary rollout is running; promote or abort it before changing routes")
                 ep.routes = self._resolve_routes(s, tenant_id, body)
             for key in ("min_replicas", "log_payloads", "cors_origins", "status"):
                 value = getattr(body, key)
@@ -271,7 +275,7 @@ class ServingService:
             rows = []
             for i, row in enumerate(instances[:DRIFT_SAMPLES_PER_REQUEST]):
                 tokens = {f: token(profile, row.get(f)) for f, profile in features.items()}
-                pred = token(pred_profile, predictions[i]) if pred_profile and i < len(predictions) else None
+                pred = token(pred_profile, prediction_token_value(predictions[i])) if pred_profile and i < len(predictions) else None
                 rows.append((tokens, pred))
             now = datetime.now(UTC)
             day = now.strftime("%Y-%m-%d")
@@ -427,6 +431,12 @@ class ServingService:
         prediction_schema = {"type": "string", "enum": [str(c) for c in classes]} if classes else {"type": "number"}
         if bundle.problem_type == "clustering":
             prediction_schema = {"type": "integer", "description": "cluster id (-1 = noise, DBSCAN only)"}
+        elif bundle.problem_type == "anomaly":
+            prediction_schema = {
+                "type": "object",
+                "description": "score: higher = more anomalous; is_anomaly = score above the model's threshold",
+                "properties": {"is_anomaly": {"type": "boolean"}, "score": {"type": "number"}},
+            }
         return {
             "openapi": "3.1.0",
             "info": {
@@ -434,6 +444,8 @@ class ServingService:
                 "version": str(ep.routes[0]["version"]),
                 "description": f"Predicts {bundle.signature['target']} ({bundle.problem_type})."
                 if bundle.signature.get("target")
+                else "Flags anomalous rows (anomaly)."
+                if bundle.problem_type == "anomaly"
                 else f"Assigns rows to clusters ({bundle.problem_type}).",
             },
             "components": {
@@ -472,7 +484,7 @@ class ServingService:
             "paths": {
                 f"/v1/endpoints/{name}/predict": {
                     "post": {
-                        "summary": f"Predict {bundle.signature['target'] or 'cluster'}",
+                        "summary": f"Predict {bundle.signature['target'] or ('anomalies' if bundle.problem_type == 'anomaly' else 'cluster')}",
                         "requestBody": {
                             "required": True,
                             "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PredictRequest"}}},

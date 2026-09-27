@@ -36,6 +36,7 @@ from .algorithms import (
     known_algorithm,
     suggest_params,
 )
+from .anomaly import AnomalyConfig
 from .clustering import ClusteringConfig
 from .forecasting import ForecastConfig
 from .preprocessing import (
@@ -83,10 +84,17 @@ class EnsembleConfig(BaseModel):
     top_k: int = Field(default=3, ge=2, le=5)
 
 
+class FairnessConfig(BaseModel):
+    """XAI-004: attributes kept with the held-out predictions for fairness analysis. Non-PII low-cardinality and numeric
+    columns are kept automatically; PII-tagged columns only when listed here."""
+
+    protected: list[str] = Field(default_factory=list, max_length=50)
+
+
 class TrainingConfig(BaseModel):
-    target: str | None = None  # required except for clustering (MDL-002a)
+    target: str | None = None  # required except for clustering (MDL-002a); optional evaluation labels for anomaly
     features: list[str] | None = None
-    problem_type: Literal["binary", "multiclass", "regression", "clustering", "forecasting"] | None = None
+    problem_type: Literal["binary", "multiclass", "regression", "clustering", "forecasting", "anomaly"] | None = None
     split: SplitConfig = Field(default_factory=SplitConfig)
     cv: CVConfig = Field(default_factory=CVConfig)
     algorithms: list[str] | None = None
@@ -99,6 +107,8 @@ class TrainingConfig(BaseModel):
     ensemble: EnsembleConfig = Field(default_factory=EnsembleConfig)
     clustering: ClusteringConfig | None = None  # TRN-006
     forecast: ForecastConfig | None = None  # TRN-007
+    anomaly: AnomalyConfig | None = None  # TRN-008
+    fairness: FairnessConfig = Field(default_factory=FairnessConfig)  # XAI-004
 
     @model_validator(mode="after")
     def _check(self) -> TrainingConfig:
@@ -107,8 +117,8 @@ class TrainingConfig(BaseModel):
                 raise ValueError(f"unknown algorithm {algo!r}")
         if self.split.method == "time" and not self.split.time_column:
             raise ValueError("time-based split needs split.time_column")
-        if self.problem_type != "clustering" and not self.target:
-            raise ValueError("target is required (except for clustering)")
+        if self.problem_type not in ("clustering", "anomaly") and not self.target:
+            raise ValueError("target is required (except for clustering and anomaly detection)")
         if self.problem_type == "forecasting":
             if self.forecast is None and self.split.time_column:
                 self.forecast = ForecastConfig(time_column=self.split.time_column)
@@ -132,6 +142,7 @@ class AlgorithmResult:
     pipeline: Pipeline
     duration_seconds: float
     trials: list[dict[str, Any]] = field(default_factory=list)
+    holdout_predictions: np.ndarray | None = None  # XAI-004: class indices on the held-out test rows
 
 
 @dataclass
@@ -145,6 +156,7 @@ class TrainingResult:
     warnings: list[str]
     background: pd.DataFrame
     reference: dict[str, Any] | None = None  # API-011 drift reference profile
+    holdout: dict[str, Any] | None = None  # XAI-004: {rows, y_true, attributes} of the held-out test set
 
 
 # -- problem detection (MDL-002) ----------------------------------------------------------------------
@@ -272,6 +284,10 @@ def train(
         from .forecasting import train_forecast
 
         return train_forecast(frame, config, schema, progress=progress)
+    if config.problem_type == "anomaly":
+        from .anomaly import train_anomaly
+
+        return train_anomaly(frame, config, schema, progress=progress)
     started = time.monotonic()
     deadline = started + config.max_training_seconds
     report = progress or (lambda f, m: None)
@@ -312,11 +328,13 @@ def train(
         X, y = X.iloc[order].reset_index(drop=True), y[order]
         cut = int(len(X) * (1 - config.split.test_size))
         X_train, X_test, y_train, y_test = X.iloc[:cut], X.iloc[cut:], y[:cut], y[cut:]
+        test_rows = order[cut:]
     else:
         stratify = y if (config.split.method == "stratified" or problem_type in CLASSIFICATION) else None
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=config.split.test_size, random_state=config.seed, stratify=stratify
         )
+        test_rows = X_test.index.to_numpy()
     X_val = y_val = None
     if config.split.validation_size > 0:
         X_train, X_val, y_train, y_val = train_test_split(
@@ -328,7 +346,10 @@ def train(
         )
 
     schema_fields = {f.name: f for f in schema.entities[0].fields} if schema and schema.entities else {}
-    groups = split_features(X_train, features, schema_fields)
+    try:
+        groups = split_features(X_train, features, schema_fields, text=config.preprocessing.text)
+    except ValueError as exc:
+        raise TrainingError(str(exc)) from exc
     if groups["dropped"]:
         warns.append(f"excluded identifier/free-text columns: {', '.join(groups['dropped'])}")
     if config.preprocessing.auto_features and groups["numeric"]:
@@ -420,10 +441,19 @@ def train(
         "classes": classes,
         "features": feature_signature(X_train, features, groups, schema_fields),
     }
+    holdout = None
+    if problem_type in CLASSIFICATION:
+        holdout = holdout_frame(frame, test_rows, y_test, config, schema_fields)
+        for r in results:
+            try:
+                r.holdout_predictions = np.asarray(r.pipeline.predict(X_test)).astype(int)[:HOLDOUT_MAX_ROWS]
+            except Exception as exc:  # noqa: BLE001 - fairness data is best-effort
+                log.warning("holdout predictions failed for %s: %s", r.algorithm, exc)
     report(0.95, "done")
     return TrainingResult(
         problem_type=problem_type,
         scoring=_scoring(problem_type),
+        holdout=holdout,
         classes=classes,
         results=results,
         best_index=best_index,
@@ -432,6 +462,37 @@ def train(
         background=X_train.sample(min(100, len(X_train)), random_state=config.seed),
         reference=reference_profile(X_train, signature, [r.pipeline for r in results], config.seed),
     )
+
+
+HOLDOUT_MAX_ROWS = 50_000
+HOLDOUT_MAX_CATEGORIES = 50
+
+
+def holdout_frame(
+    frame: pd.DataFrame, test_rows: np.ndarray, y_test: np.ndarray, config: TrainingConfig, schema_fields: dict[str, Any]
+) -> dict[str, Any]:
+    """XAI-004: the held-out rows' labels plus candidate protected attributes (any dataset column, feature or not).
+
+    Kept: numeric columns and columns with at most 50 distinct values. PII-tagged columns (INF-009) are kept only when
+    ``fairness.protected`` names them. Rows are capped at 50k.
+    """
+    explicit = set(config.fairness.protected)
+    unknown = explicit - set(frame.columns)
+    if unknown:
+        raise TrainingError(f"fairness.protected columns not found: {', '.join(sorted(unknown))}")
+    rows = np.asarray(test_rows)[:HOLDOUT_MAX_ROWS]
+    subset = frame.iloc[rows]
+    attributes: dict[str, Any] = {}
+    for col in frame.columns:
+        if col == config.target:
+            continue
+        field_ = schema_fields.get(col)
+        if field_ is not None and field_.pii and col not in explicit:
+            continue
+        s = subset[col]
+        if col in explicit or pd.api.types.is_numeric_dtype(s) or frame[col].nunique(dropna=True) <= HOLDOUT_MAX_CATEGORIES:
+            attributes[col] = s.reset_index(drop=True)
+    return {"rows": rows, "y_true": np.asarray(y_test)[:HOLDOUT_MAX_ROWS], "attributes": pd.DataFrame(attributes)}
 
 
 def reference_profile(X: pd.DataFrame, signature: dict[str, Any], pipelines: list[Any], seed: int) -> dict[str, Any] | None:

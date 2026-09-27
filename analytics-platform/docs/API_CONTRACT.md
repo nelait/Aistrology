@@ -430,3 +430,103 @@ All additions are backward compatible: existing request and response fields keep
   - Databases: `query` must be a single SELECT. It runs in a read-only transaction with a statement timeout, capped at `row_limit` (≤ `AP_CONNECTOR_MAX_ROWS`) and at 1 GB.
 - SSRF guard: hosts resolving to private addresses are rejected (422) unless allowlisted with `GET`/`PUT /v1/connectors/allowlist` `{hosts: [hostname | *.suffix | CIDR]}` (admin only). Loopback, link-local and metadata addresses can only be opened by the platform setting `AP_CONNECTOR_HOST_ALLOWLIST`.
 - `sqlite` connectors exist only for tests and local development (`AP_CONNECTOR_ALLOW_SQLITE=1`). MySQL needs the `connectors` extra (PyMySQL).
+
+## Phase 3: ML & serving
+All additions are backward compatible.
+
+### Anomaly detection (MDL-002b, TRN-008)
+- `POST /v1/experiments` accepts `problem_type: "anomaly"`. `target` is optional and names a **label column used only for evaluation** (never a feature).
+  - `anomaly?: {contamination?: 0<x≤0.5 (default: the label rate, else 0.05), threshold: contamination|f1, positive_label?, max_fit_rows: 5000}`. `threshold: "f1"` needs labels and picks the score that maximizes training F1.
+  - Algorithms: `isolation_forest`, `one_class_svm`, `lof` (novelty mode) and `autoencoder` (MLP reconstruction error). All report an anomaly score where **higher = more anomalous**.
+  - Model selection: PR-AUC on the held-out rows when labels exist; otherwise agreement with the consensus ranking of all detectors (`cv_metric: "consensus"`). AutoML tunes hyperparameters only when labels exist.
+  - `metrics`: `{n_test, threshold, anomaly_rate, score_mean, score_p95, contamination, cv_metric}`, plus `{precision, recall, f1, roc_auc, pr_auc, label_rate}` when labels exist.
+  - `artifacts`: `score_distribution {edges, counts, counts_normal?, counts_anomaly?}`, `threshold`, `feature_importance [{feature, importance, direction}]` (standardized mean difference, flagged vs normal) and `top_anomalies [{row, score}]`. With labels also `roc_curve`, `pr_curve` and `confusion_matrix`.
+- `POST /v1/experiments/detect`:
+  - Without a target the response adds `alternatives: [{problem_type: "anomaly"}]`.
+  - A binary target whose minority class is ≤ 5 % (or is named fraud / anomaly / outlier …) adds `{problem_type: "anomaly", label_column, positive_label, reason}`.
+- Serving: `predictions: [{is_anomaly, score}]` plus `threshold`. Batch output has `is_anomaly` and `anomaly_score` columns. Drift monitors the `is_anomaly` rate. `explain: true` and `/explain` return 422; `/onnx` returns 409 `onnx_unsupported`.
+
+### Fairness (XAI-004)
+- Classification runs store their held-out test labels, predictions and candidate protected attributes: numeric columns and columns with ≤ 50 values. PII-tagged columns are stored only when listed in the new training field `fairness: {protected: [...]}`.
+- `POST /v1/runs/{id}/fairness` `{protected: [column, …] (1–20), positive_class?, min_group_size: 10}` returns:
+  ```
+  {run_id, positive_class, n_test, min_group_size,
+   attributes: [{attribute, grouping: categories|quartiles,
+                 groups: [{group, n, selection_rate, base_rate, tpr, fpr, precision, accuracy, selection_ratio, small_group}],
+                 demographic_parity_difference, demographic_parity_ratio, equalized_odds_difference,
+                 four_fifths_rule: {threshold: 0.8, passed, flagged_groups}}]}
+  ```
+  - Any dataset column works, feature or not. Columns not stored with the run are read from the run's dataset version.
+  - Numeric attributes with > 10 values are split into quartiles.
+  - Groups smaller than `min_group_size` are reported but left out of the summary metrics.
+  - `positive_class` defaults to the second class (binary) or the rarest class (multiclass).
+  - 422: not a classification run, an unknown column, the target as an attribute, or an unknown class. 409 `holdout_missing`: the run was trained before this feature.
+
+### Text features (FE-006) and projections (FE-005a)
+- `preprocessing.text?: {method: "tfidf", max_features: 200, ngram_max: 1, svd_components?: int, columns?: [..]}` includes free-text columns (otherwise dropped) as TF-IDF features inside the served pipeline, optionally reduced with TruncatedSVD.
+  - Without `columns`, schema TEXT columns and multi-word string columns are used. Primary keys and `*_id` columns stay dropped.
+  - The feature signature group is `text`. SHAP values and importances aggregate back to the source column.
+  - Text pipelines are not ONNX-exportable (409).
+- `POST /v1/datasets/{id}/projection?version=` and `POST /v1/runs/{id}/projection`:
+  - Body: `{method: auto|umap|tsne|pca, features?, color_by?, sample: 10–5000 (default 2000), perplexity, n_neighbors, seed}`.
+  - Response: `{method, n, total_rows, x[], y[], color_by?, color?[], features?, actual?, note}`.
+  - `auto` means UMAP when `umap-learn` is installed (the `ml-extra` extra), else t-SNE.
+  - Dataset projections leave PII columns out unless they are listed in `features`.
+  - Run projections use the run's fitted preprocessing and colour points by the model's predictions; `actual` is the target.
+  - Projections are for visualization only. Forecasting runs and uploaded models return 409.
+
+### Custom model upload (TRN-010, SEC-010)
+- `POST /v1/models/upload` (multipart, needs `models.train`): `file` (ONNX, ≤ 200 MB), `signature` (JSON), `name`, `description?`, `dataset_id?`. Returns 201 `{model_id, name, version, model_version_id, stage, run_id, sha256, input_mode, reference_dataset_id}`.
+  - `signature`: `{problem_type: binary|multiclass|regression, target?, classes? (classification), features: [{name, type: number|integer|string|boolean, categories?, min?, max?}], input: auto|per_feature|tensor, outputs?: {label?, probabilities?, value?}}`.
+  - Inputs are either one `[N,1]` tensor per feature, named after it (what `/onnx` exports), or one float `[N,F]` tensor in signature order. Labels may be class values or class indices. Probabilities may be a matrix or a ZipMap.
+  - Validation:
+    - Pickle, joblib and zip payloads are refused.
+    - The file must parse as ONNX, pass `onnx.checker`, embed its weights (no external data) and use only the standard operator domains.
+    - It is loaded in onnxruntime and dry-run on a synthetic row built from the signature, then on reference rows.
+    - Failures return 422 `{code: "model_rejected", message}`. A file that is too large returns 413.
+  - Reference data: the `dataset_id` rows, or 100 synthetic rows saved as a small `model_upload` dataset. They feed drift monitoring and explanations.
+- The model becomes an ordinary registry version (algorithm `onnx_upload`, signature `source: "upload"`). It is deployed and served through the normal endpoint APIs.
+  - `explain` uses SHAP's KernelExplainer on 20 background rows.
+  - `/v1/runs/{run_id}/onnx` returns the uploaded file.
+  - Uploaded models are never deserialized with pickle or joblib.
+
+### Canary rollouts (API-009)
+- `POST /v1/endpoints/{name}/canary` (needs `endpoints.deploy`) `{model_version_id, steps: [5, 25, 50, 100], step_minutes: 10, max_error_rate: 0.05, max_p95_ms_increase: 200, min_requests: 20}` returns 201 with the rollout.
+  - The candidate gets `steps[0]` % of traffic; the current routes share the rest proportionally.
+  - A final 100 is appended to `steps` when it is missing.
+  - 409 when a rollout is already running.
+- For each step, a `serving.canary_step` job compares the canary with the baseline over the prediction logs written since the step began:
+  - **Rollback** when the canary's error rate (status ≥ 400) is above `max_error_rate`, or its p95 latency is more than `max_p95_ms_increase` ms above the baseline's. The baseline routes are restored, an `endpoint.threshold` notification and webhook `{endpoint, kind: "canary", status: "rolled_back", canary_id, reason, canary, baseline}` is sent, and `endpoint.canary.rollback` is audited.
+  - **Hold** when the canary has fewer than `min_requests` requests. It is re-evaluated after max(step, 60 s).
+  - Otherwise **ramp** to the next step, or **complete** at 100 % (the routes become the candidate only).
+- `GET /v1/endpoints/{name}/canary` returns the latest rollout: `{id, endpoint, status: running|completed|rolled_back|aborted, candidate, baseline_routes, steps, step_index, weight, thresholds, reason, history[], step_started_at, next_eval_at, live?: {canary, baseline}}`.
+- `POST /v1/endpoints/{name}/canary/promote` gives the candidate 100 %. `POST /v1/endpoints/{name}/canary/abort` restores the baseline. Both return 409 when no rollout is running. `PATCH` on an endpoint's routes returns 409 while a rollout runs.
+- Scheduling: the platform has no scheduler, so each step job **re-enqueues itself with a delay** (`not_before` in its params, `next_eval_at` in the database).
+  - In-process, this uses a timer thread. Timers don't survive restarts, so `POST /v1/endpoints/canary-steps` (202, a job) evaluates every due rollout. Point Cloud Scheduler or cron at it every minute in production.
+  - Early or duplicate triggers are dropped.
+
+### Streaming inference (API-006)
+- `POST /v1/endpoints/{name}/predict/stream` (needs `endpoints.predict`) takes the `predict` body plus `chunk_size: 1–1000` (default 100) and up to 10,000 `instances`. It returns `text/event-stream`:
+  - `start {endpoint, total, chunk_size}`, then one `prediction {offset, count, predictions, probabilities?, classes?, model_version}` per chunk (`chunk_size` 1 = one event per instance), then `done {total}`.
+  - Forecasting endpoints send `start {endpoint, horizon, model_version}`, one `forecast {step, timestamp, prediction, lower, upper}` per horizon step, then `done`.
+  - Errors mid-stream arrive as `error {status, detail}`.
+  - Each chunk after the first costs one request against the caller's rate limit (429 in an `error` event). An organization can hold at most 8 concurrent streams (429).
+- `POST /v1/endpoints/{name}/stream-token` returns `{token, expires_in: 60, url}`: a single-use token bound to the caller and the endpoint.
+- WebSocket `/v1/endpoints/{name}/ws`:
+  - Authenticate with `?token=…`, or connect without a token and send `{"type": "auth", "api_key": …}` or `{"type": "auth", "token": <access token>}` as the first message (within 10 s).
+  - The server answers `{"type": "ready"}`. Each message `{id?, instances | horizon, history?, explain?}` then gets `{id, …predict response}` or `{id, error: {status, detail}}`.
+  - Every message costs one request against the rate limit.
+  - Close codes: 4401 (auth), 4403 (permission or IP policy), 4404 (endpoint), 4429 (too many streams), 1009 (message > 1 MB).
+
+### GraphQL (API-003)
+- `POST /graphql`. GraphiQL is served on `GET /graphql` in dev mode only.
+- Authentication, rate limits and IP policy are the same as REST. Each field checks the matching REST permission. Results are tenant-scoped, and project visibility applies to datasets and to the experiments and runs built on them.
+- Queries: `datasets(projectId, limit)`, `dataset(id)`, `experiments(datasetId, limit) { runs }`, `run(id)`, `models`, `model(id) { versions }`, `endpoints`, `endpoint(name)`, `dashboards(archived)`. JSON-valued fields (`metrics`, `params`, `config`, `routes`, `signature`, `spec`) use the `JSON` scalar.
+- Mutation: `predict(endpoint: String!, instances: [JSON!], horizon: Int, explain: Boolean): JSON` (needs `endpoints.predict`). It behaves exactly like REST predict, including logging, metering and drift sampling.
+
+### gRPC (API-004)
+- Runs as a separate process: `python -m app.serving.grpc_server --port 50051`.
+- Service `ap.v1.Predictor/Predict` is defined in `app/serving/protos/predict.proto`. Request and response are `google.protobuf.Struct`: `{endpoint, instances, explain?, horizon?, history?}` in, the REST predict response out.
+- Authenticate with metadata `x-api-key` (or `authorization: Bearer …`). Key checks, IP policy, the `endpoints.predict` permission and the rate limit are the same as REST.
+- Status codes: UNAUTHENTICATED, PERMISSION_DENIED, NOT_FOUND, INVALID_ARGUMENT, RESOURCE_EXHAUSTED, INTERNAL.
+- Run it behind TLS termination.

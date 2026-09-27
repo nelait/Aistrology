@@ -315,7 +315,7 @@ def train_clustering(
         raise TrainingError("clustering needs at least 10 rows")
     X = frame[features]
     schema_fields = {f.name: f for f in schema.entities[0].fields} if schema and schema.entities else {}
-    groups = split_features(X, features, schema_fields)
+    groups = split_features(X, features, schema_fields, text=config.preprocessing.text)
     warns: list[str] = []
     if groups["dropped"]:
         warns.append(f"excluded identifier/free-text columns: {', '.join(groups['dropped'])}")

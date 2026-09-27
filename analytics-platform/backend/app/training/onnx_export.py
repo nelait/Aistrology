@@ -76,7 +76,7 @@ def _plain(step: Any) -> Any:
 def export_onnx(pipeline: Any, signature: dict[str, Any], algorithm: str) -> bytes:
     """Serialize an eligible pipeline to ONNX bytes, or raise :class:`OnnxUnsupported` with the reason."""
     problem = signature.get("problem_type")
-    if problem in ("clustering", "forecasting"):
+    if problem in ("clustering", "forecasting", "anomaly"):
         raise OnnxUnsupported(f"{problem} models can't be exported to ONNX")
     if not isinstance(pipeline, Pipeline):
         raise OnnxUnsupported("only scikit-learn pipelines can be exported")
@@ -85,6 +85,8 @@ def export_onnx(pipeline: Any, signature: dict[str, Any], algorithm: str) -> byt
     groups: dict[str, list[str]] = {}
     for f in signature["features"]:
         groups.setdefault(f["group"], []).append(f["name"])
+    if groups.get("text"):
+        raise OnnxUnsupported("text (TF-IDF) features have no ONNX converter in this exporter")
     if groups.get("categorical") or groups.get("datetime"):
         raise OnnxUnsupported(
             "categorical and date features use custom transformers with no ONNX equivalent; "

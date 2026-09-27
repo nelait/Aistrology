@@ -599,4 +599,30 @@ class Connector(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "name"),)
 
 
+class CanaryRollout(Base):
+    """API-009: a progressive (canary) rollout of a model version on an endpoint, evaluated step by step."""
+
+    __tablename__ = "canary_rollouts"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("can"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    endpoint_id: Mapped[str] = mapped_column(String(40), index=True)
+    endpoint_name: Mapped[str] = mapped_column(String(100))
+    candidate: Mapped[dict[str, Any]] = mapped_column(JSON)  # the route of the new model version
+    baseline_routes: Mapped[list[Any]] = mapped_column(JSON)  # routes before the rollout (restored on rollback)
+    steps: Mapped[list[Any]] = mapped_column(JSON)  # canary traffic percentages, e.g. [5, 25, 50, 100]
+    step_index: Mapped[int] = mapped_column(Integer, default=0)
+    step_minutes: Mapped[float] = mapped_column(Float)
+    max_error_rate: Mapped[float] = mapped_column(Float)
+    max_p95_ms_increase: Mapped[float] = mapped_column(Float)
+    min_requests: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running | completed | rolled_back | aborted
+    reason: Mapped[str | None] = mapped_column(Text)
+    history: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    step_started_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    next_eval_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(TS)
+
+
 TENANT_TABLES = [t for t in Base.metadata.sorted_tables if "tenant_id" in t.columns and t.name != "tenants"]

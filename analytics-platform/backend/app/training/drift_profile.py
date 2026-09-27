@@ -85,6 +85,13 @@ def token(profile: dict[str, Any], value: Any) -> str:
     return numeric_token(profile, value) if profile["type"] == "numeric" else categorical_token(profile, value)
 
 
+def prediction_token_value(prediction: Any) -> Any:
+    """The value a served prediction contributes to the prediction-drift sample (anomaly: the is_anomaly flag)."""
+    if isinstance(prediction, dict) and "is_anomaly" in prediction:
+        return str(bool(prediction["is_anomaly"]))
+    return prediction
+
+
 def distribution(profile: dict[str, Any], tokens: list[str]) -> list[float]:
     bins = profile["bins"]
     counts = dict.fromkeys(bins, 0)
@@ -111,6 +118,8 @@ def served_prediction_values(pipeline: Any, X: pd.DataFrame, signature: dict[str
     """Predictions as the serving layer returns them (class labels, cluster ids or numbers)."""
     pred = pipeline.predict(X)
     classes = signature.get("classes")
+    if signature.get("problem_type") == "anomaly":
+        return [str(bool(v)) for v in pred]  # TRN-008: the is_anomaly flag
     if classes:
         return [str(classes[int(i)]) for i in pred]
     if signature.get("problem_type") == "clustering":
@@ -119,7 +128,7 @@ def served_prediction_values(pipeline: Any, X: pd.DataFrame, signature: dict[str
 
 
 def prediction_profile(values: list[Any], signature: dict[str, Any]) -> dict[str, Any]:
-    if signature.get("classes") or signature.get("problem_type") == "clustering":
+    if signature.get("classes") or signature.get("problem_type") in ("clustering", "anomaly"):
         return _categorical_profile(pd.Series(values, dtype=object))
     return _numeric_profile(pd.Series(values, dtype=float))
 
