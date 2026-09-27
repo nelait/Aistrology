@@ -243,7 +243,7 @@ def test_build_provider_requires_secrets_and_https():
         kind=ProviderKind.OPENAI_COMPATIBLE, base_url="https://llm.internal.example/v1", model="llama-3.3-70b", secret_name="anthropic"
     )
     assert build_provider("acme", compat, secrets).name == "openai_compatible"
-    assert TenantLLMConfig().chain[0].kind == ProviderKind.MOCK
+    assert TenantLLMConfig().chain[0].kind == ProviderKind.PLATFORM  # LPA-011 default
 
 
 # -- natural-language schema ------------------------------------------------

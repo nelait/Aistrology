@@ -15,6 +15,7 @@ from ..generation.export import ExportFormat, export_frame, export_zip, to_recor
 from ..generation.generator import GenerationError, GenerationOptions, GenerationTooLarge, check_size, generate, plan_counts, preview
 from ..jobs.core import JobService
 from ..llm.router import LLMOutputError, LLMUnavailableError
+from ..projects import default_project_id
 from ..schema.json_schema import parse_json_schema
 from ..schema.model import Issue, Schema, SchemaValidationError, ensure_valid, to_json_schema, validate_schema
 from ..schema.natural_language import parse_natural_language
@@ -70,7 +71,7 @@ async def parse_schema(
             schema, warnings = parse_xsd(body.content)
         else:
             schema, warnings = await parse_natural_language(
-                body.content, state.router(principal.tenant_id), current=body.current, actor=principal.user_id
+                body.content, state.router(principal.tenant_id, "schema.from_text"), current=body.current, actor=principal.user_id
             )
     except SchemaValidationError as exc:
         raise _issues_http(exc) from exc
@@ -133,7 +134,14 @@ async def generate_data(body: GenerateRequest, state: AppState = StateDep, princ
         estimated_bytes=estimate,
     )
     if body.save_as:
-        record = state.store.save_frames(principal.tenant_id, principal.user_id, body.save_as, frames, body.schema_)
+        record = state.store.save_frames(
+            principal.tenant_id,
+            principal.user_id,
+            body.save_as,
+            frames,
+            body.schema_,
+            project_id=default_project_id(state, principal.tenant_id),
+        )
         return record.model_dump(mode="json")
     if len(frames) == 1:
         name, frame = next(iter(frames.items()))

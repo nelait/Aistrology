@@ -19,7 +19,7 @@ from ..storage.datasets import DatasetNotFound
 from ..training.algorithms import ALGORITHMS, AlgorithmInfo
 from ..training.service import ExperimentOut, NotFound, RunOut, TrainingService
 from ..training.trainer import TrainingConfig, TrainingError, detect_problem_type
-from .deps import AppState, StateDep, require
+from .deps import AppState, StateDep, guard_dataset, require
 
 router = APIRouter(prefix="/v1", tags=["training"])
 Trainer = require(Permission.TRAIN_MODELS)
@@ -64,6 +64,7 @@ async def algorithms(principal: Principal = Reader) -> list[AlgorithmInfo]:
 @router.post("/experiments/detect")
 async def detect(body: DetectBody, state: AppState = StateDep, principal: Principal = Reader) -> dict[str, Any]:
     """MDL-002: auto-detect the problem type for a target column."""
+    guard_dataset(state, principal, body.dataset_id)
     try:
         record = state.store.get(principal.tenant_id, body.dataset_id, body.version)
         frame = await asyncio.to_thread(load_table, state.store, record)
@@ -86,6 +87,7 @@ async def detect(body: DetectBody, state: AppState = StateDep, principal: Princi
 
 @router.post("/experiments", status_code=202)
 async def create_experiment(body: ExperimentCreate, state: AppState = StateDep, principal: Principal = Trainer) -> dict[str, Any]:
+    guard_dataset(state, principal, body.dataset_id)
     config = TrainingConfig.model_validate(body.model_dump(exclude={"name", "dataset_id", "dataset_version"}))
     try:
         exp = TrainingService(state).create_experiment(
@@ -190,7 +192,7 @@ async def explanation_text(run_id: str, state: AppState = StateDep, principal: P
         max_tokens=2000,
     )
     try:
-        response = await state.router(principal.tenant_id).complete(request, actor=principal.user_id)
+        response = await state.router(principal.tenant_id, "model.explain").complete(request, actor=principal.user_id)
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"text": response.text}

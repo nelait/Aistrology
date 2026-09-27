@@ -65,6 +65,16 @@ class Settings:
     # Development-only header auth (X-Tenant-ID / X-User-ID). Never enable in production.
     dev_auth: bool = field(default_factory=lambda: _env("AP_DEV_AUTH") == "1")
 
+    # --- platform-provided LLM (LPA-011) --------------------------------
+    # The key lives in the secret store as tenant "platform", name "platform-llm-key".
+    platform_llm_kind: str = field(default_factory=lambda: _env("AP_PLATFORM_LLM_KIND", "mock"))
+    platform_llm_model: str | None = field(default_factory=lambda: _env("AP_PLATFORM_LLM_MODEL"))
+    platform_llm_base_url: str | None = field(default_factory=lambda: _env("AP_PLATFORM_LLM_BASE_URL"))
+
+    # --- default tenant quotas (MT-006), overridable per tenant -----------
+    default_max_concurrent_jobs: int = field(default_factory=lambda: int(_env("AP_DEFAULT_MAX_CONCURRENT_JOBS", "5")))
+    default_llm_tokens_per_month: int = field(default_factory=lambda: int(_env("AP_DEFAULT_LLM_TOKENS_PER_MONTH", "2000000")))
+
     # --- jobs -----------------------------------------------------------
     # Run a job worker thread inside the API process (local/dev). In the cloud,
     # workers are a separate deployment: ``python -m app.jobs.worker``.

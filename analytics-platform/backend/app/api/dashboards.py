@@ -21,7 +21,7 @@ from ..db.models import Webhook, WebhookDelivery
 from ..jobs.core import JobService
 from ..storage.datasets import DatasetNotFound
 from ..webhooks import WebhookDispatcher, WebhookError
-from .deps import AppState, StateDep, require
+from .deps import AppState, StateDep, guard_dataset, require
 
 router = APIRouter(prefix="/v1", tags=["analytics", "dashboards", "webhooks"])
 Viewer = require(Permission.VIEW)
@@ -60,6 +60,7 @@ class RunBody(BaseModel):
 
 @router.post("/analytics", response_model=AnalyticOut, status_code=201)
 async def create_analytic(body: AnalyticCreate, state: AppState = StateDep, principal: Principal = Creator) -> AnalyticOut:
+    guard_dataset(state, principal, body.dataset_id)
     return await _call(AnalyticsService(state).create, principal.tenant_id, principal.user_id, body)
 
 

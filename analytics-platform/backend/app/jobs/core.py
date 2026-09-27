@@ -101,6 +101,9 @@ class JobService:
     def submit(self, tenant_id: str, job_type: str, params: dict[str, Any], actor: str, *, max_attempts: int = 3) -> JobOut:
         if job_type not in HANDLERS:
             raise ValueError(f"unknown job type {job_type!r}")
+        from ..quotas import check_job_quota
+
+        check_job_quota(self.state, tenant_id, job_type)  # MT-006; raises QuotaExceededError
         with self.state.db.session(tenant_id) as s:
             job = Job(tenant_id=tenant_id, type=job_type, params=params, created_by=actor, max_attempts=max_attempts)
             s.add(job)

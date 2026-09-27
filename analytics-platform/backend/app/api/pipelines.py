@@ -14,7 +14,7 @@ from ..cleaning.steps import Step, StepError
 from ..datasets_io import MultiTableError
 from ..jobs.core import JobOut, JobService
 from ..storage.datasets import DatasetNotFound
-from .deps import AppState, StateDep, require
+from .deps import AppState, StateDep, guard_dataset, require
 
 router = APIRouter(prefix="/v1/pipelines", tags=["pipelines"])
 Editor = require(Permission.EDIT_PIPELINES)
@@ -57,6 +57,7 @@ def _errors(fn, *args, **kwargs):
 
 @router.post("", response_model=PipelineOut, status_code=201)
 async def create_pipeline(body: PipelineCreate, state: AppState = StateDep, principal: Principal = Editor) -> PipelineOut:
+    guard_dataset(state, principal, body.dataset_id)
     return _errors(
         PipelineService(state).create, principal.tenant_id, principal.user_id, name=body.name, dataset_id=body.dataset_id, steps=body.steps
     )
@@ -74,6 +75,7 @@ async def list_templates(state: AppState = StateDep, principal: Principal = Read
 
 @router.post("/from-template", response_model=PipelineOut, status_code=201)
 async def from_template(body: InstantiateBody, state: AppState = StateDep, principal: Principal = Editor) -> PipelineOut:
+    guard_dataset(state, principal, body.dataset_id)
     return await asyncio.to_thread(
         _errors, PipelineService(state).instantiate, principal.tenant_id, principal.user_id, body.template_id, body.dataset_id, body.name
     )

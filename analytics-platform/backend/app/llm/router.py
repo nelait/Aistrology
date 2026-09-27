@@ -149,7 +149,9 @@ class LLMRouter:
         ledger: UsageLedger,
         audit: AuditLog,
         cache: ResponseCache | None = None,
+        precheck=None,
     ):
+        """``precheck(provider)`` may raise ProviderError to skip a provider (e.g. an exhausted quota)."""
         if not providers:
             raise ValueError("at least one provider is required")
         self.tenant_id = tenant_id
@@ -157,6 +159,7 @@ class LLMRouter:
         self.ledger = ledger
         self.audit = audit
         self.cache = cache
+        self.precheck = precheck
 
     async def complete(self, request: LLMRequest, *, actor: str = "system") -> LLMResponse:
         errors: list[ProviderError] = []
@@ -166,6 +169,8 @@ class LLMRouter:
                 self._audit(actor, request, hit, outcome="cache_hit")
                 return hit
             try:
+                if self.precheck is not None:
+                    self.precheck(provider)
                 response = await provider.complete(request)
             except ProviderError as exc:
                 errors.append(exc)

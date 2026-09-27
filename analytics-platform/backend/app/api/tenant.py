@@ -296,3 +296,36 @@ async def audit_log(
 @router.get("/audit/verify")
 async def verify_audit(state: AppState = StateDep, principal: Principal = require(Permission.VIEW_AUDIT)) -> dict[str, bool]:
     return {"valid": state.audit.verify(principal.tenant_id)}
+
+
+# -- SSO settings (AUTH-001) --------------------------------------------------------------------
+
+
+class SSOSettings(BaseModel):
+    domains: list[str] = Field(default_factory=list, max_length=20, description="Email domains whose users may join via SSO")
+    default_role: Role = Role.VIEWER
+
+
+@router.get("/sso", response_model=SSOSettings)
+async def get_sso(state: AppState = StateDep, principal: Principal = Admin) -> SSOSettings:
+    return SSOSettings.model_validate(state.get_setting(principal.tenant_id, "sso") or {})
+
+
+@router.put("/sso", response_model=SSOSettings)
+async def put_sso(body: SSOSettings, state: AppState = StateDep, principal: Principal = Admin) -> SSOSettings:
+    domains = sorted({d.lower().strip() for d in body.domains})
+    from sqlalchemy import select as _select
+
+    from ..db.models import TenantSetting
+
+    with state.db.session() as s:  # a domain can belong to one tenant only
+        for other in s.execute(
+            _select(TenantSetting).where(TenantSetting.key == "sso", TenantSetting.tenant_id != principal.tenant_id)
+        ).scalars():
+            clash = set(domains) & {d.lower() for d in other.value.get("domains", [])}
+            if clash:
+                raise HTTPException(status_code=409, detail=f"domain already claimed by another organization: {sorted(clash)}")
+    value = {"domains": domains, "default_role": body.default_role.value}
+    state.put_setting(principal.tenant_id, "sso", value)
+    state.audit.record(principal.tenant_id, principal.user_id, "tenant.sso.update", **value)
+    return SSOSettings.model_validate(value)

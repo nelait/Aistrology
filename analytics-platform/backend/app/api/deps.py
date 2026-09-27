@@ -18,9 +18,11 @@ from ..cloud.factory import build_cloud
 from ..config import Settings, load_settings
 from ..db.models import TenantSetting
 from ..db.session import Database, default_url
+from ..llm.base import ProviderError
 from ..llm.config import MissingSecretError, TenantLLMConfig, build_provider
 from ..llm.router import LLMRouter, ResponseCache
 from ..metering import DbUsageLedger, Metering
+from ..quotas import QuotaExceededError, check_platform_llm_quota
 from ..ratelimit import RateLimiter
 from ..storage.datasets import TENANT_ID_RE, DatasetStore
 
@@ -68,6 +70,9 @@ class AppState:
         with self.db.session(tenant_id) as s:
             if s.get(Tenant, tenant_id) is None:
                 s.add(Tenant(id=tenant_id, name=tenant_id))
+        from ..projects import default_project_id
+
+        default_project_id(self, tenant_id)
 
     def llm_config(self, tenant_id: str) -> TenantLLMConfig:
         raw = self.get_setting(tenant_id, "llm")
@@ -76,15 +81,40 @@ class AppState:
     def set_llm_config(self, tenant_id: str, config: TenantLLMConfig) -> None:
         self.put_setting(tenant_id, "llm", config.model_dump(mode="json"))
 
-    def router(self, tenant_id: str) -> LLMRouter:
+    def router(self, tenant_id: str, task: str | None = None) -> LLMRouter:
+        """The tenant's LLM router. ``task`` selects a per-task model for the primary provider (LPA-009)."""
         if tenant_id in self.router_overrides:
             return self.router_overrides[tenant_id]
         config = self.llm_config(tenant_id)
+        chain = list(config.chain)
+        if task and task in config.task_models:
+            chain[0] = chain[0].model_copy(update={"model": config.task_models[task]})
+        platform = {
+            "kind": self.settings.platform_llm_kind,
+            "model": self.settings.platform_llm_model,
+            "base_url": self.settings.platform_llm_base_url,
+        }
         try:
-            providers = [build_provider(tenant_id, p, self.secrets) for p in config.chain]
+            providers = [build_provider(tenant_id, p, self.secrets, platform=platform) for p in chain]
         except (MissingSecretError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=f"LLM provider is not configured: {exc}") from exc
-        return LLMRouter(tenant_id, providers, ledger=self.ledger, audit=self.audit, cache=self.cache if config.cache_enabled else None)
+
+        def precheck(provider) -> None:
+            # LPA-011 / MT-006: the platform-provided LLM is capped per tenant per month; BYOK providers are not.
+            if provider.name.startswith("platform:"):
+                try:
+                    check_platform_llm_quota(self, tenant_id)
+                except QuotaExceededError as exc:
+                    raise ProviderError(provider.name, str(exc), retryable=True) from exc
+
+        return LLMRouter(
+            tenant_id,
+            providers,
+            ledger=self.ledger,
+            audit=self.audit,
+            cache=self.cache if config.cache_enabled else None,
+            precheck=precheck,
+        )
 
 
 def build_state(settings: Settings | None = None, *, cloud: Cloud | None = None, **overrides: Any) -> AppState:
@@ -170,3 +200,16 @@ def require(permission: Permission):
 
 StateDep = Depends(get_state)
 PrincipalDep = Depends(get_principal)
+
+
+def guard_dataset(state: AppState, principal: Principal, dataset_id: str | None) -> None:
+    """404 unless the caller can see the dataset (tenant + project access, AUTH-003)."""
+    if dataset_id is None:
+        return
+    from ..projects import ProjectAccessDenied, check_dataset
+    from ..storage.datasets import DatasetNotFound
+
+    try:
+        check_dataset(state, principal, dataset_id)
+    except (DatasetNotFound, ProjectAccessDenied) as exc:
+        raise HTTPException(status_code=404, detail="dataset not found") from exc

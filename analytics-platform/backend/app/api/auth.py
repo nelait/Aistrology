@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 
+from ..auth.oidc import OIDCClient, OIDCError, providers_from_env
 from ..auth.service import AuthError, ConflictError, Principal
 from ..db.models import User
 from .deps import AppState, PrincipalDep, StateDep
@@ -108,3 +109,59 @@ async def mfa_activate(body: MfaCode, principal: Principal = PrincipalDep, state
     except AuthError as exc:
         raise _auth_error(exc) from exc
     state.audit.record(principal.tenant_id, principal.user_id, "auth.mfa_enabled")
+
+
+# -- OIDC single sign-on (AUTH-001) ------------------------------------------------------------------
+
+
+class OIDCCallback(BaseModel):
+    code: str = Field(max_length=4096)
+    state: str = Field(max_length=4096)
+
+
+def _oidc_clients(state: AppState) -> dict[str, OIDCClient]:
+    if "oidc" not in state.extras:
+        state.extras["oidc"] = {name: OIDCClient(cfg, state.auth.signing_key()) for name, cfg in providers_from_env().items()}
+    return state.extras["oidc"]
+
+
+def _allowed_redirects() -> set[str]:
+    import os
+
+    return {u.strip() for u in os.environ.get("AP_OIDC_REDIRECT_URIS", "http://localhost:3000/auth/callback").split(",") if u.strip()}
+
+
+@router.get("/oidc/providers")
+async def oidc_providers(state: AppState = StateDep) -> dict[str, list[str]]:
+    return {"providers": sorted(_oidc_clients(state))}
+
+
+@router.get("/oidc/{provider}/authorize")
+async def oidc_authorize(provider: str, redirect_uri: str, state: AppState = StateDep) -> dict[str, str]:
+    client = _oidc_clients(state).get(provider)
+    if client is None:
+        raise HTTPException(status_code=404, detail="unknown identity provider")
+    if redirect_uri not in _allowed_redirects():
+        raise HTTPException(status_code=400, detail="redirect_uri is not allowed")
+    try:
+        url, st = client.authorization_url(redirect_uri)
+    except OIDCError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"authorization_url": url, "state": st}
+
+
+@router.post("/oidc/{provider}/callback", response_model=TokenResponse)
+async def oidc_callback(provider: str, body: OIDCCallback, state: AppState = StateDep) -> TokenResponse:
+    client = _oidc_clients(state).get(provider)
+    if client is None:
+        raise HTTPException(status_code=404, detail="unknown identity provider")
+    try:
+        claims = client.exchange(body.code, body.state)
+        pair = state.auth.sso_login(claims["email"], provider, claims["sub"])
+    except OIDCError as exc:
+        state.audit.record("platform", provider, "auth.sso_failed", reason=str(exc))
+        raise HTTPException(status_code=401, detail={"code": "sso_failed", "message": str(exc)}) from exc
+    except AuthError as exc:
+        state.audit.record("platform", claims.get("email", provider), "auth.sso_failed", code=exc.code)
+        raise _auth_error(exc) from exc
+    return TokenResponse(**pair.__dict__)

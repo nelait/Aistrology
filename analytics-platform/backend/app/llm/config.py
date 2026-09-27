@@ -12,6 +12,8 @@ from .providers.mock import MockProvider
 
 
 class ProviderKind(str, Enum):
+    # LPA-011: the platform's own provider for tenants without BYOK, metered against a monthly allowance.
+    PLATFORM = "platform"
     OPENAI = "openai"
     OPENAI_COMPATIBLE = "openai_compatible"
     ANTHROPIC = "anthropic"
@@ -25,6 +27,8 @@ DEFAULT_MODELS = {
     ProviderKind.GEMINI: "gemini-2.5-pro",
     ProviderKind.MOCK: "mock-1",
 }
+
+PLATFORM_SECRET = "platform-llm-key"
 
 
 class DataMinimization(str, Enum):
@@ -54,6 +58,8 @@ class ProviderConfig(BaseModel):
     def resolved_model(self) -> str:
         if self.model:
             return self.model
+        if self.kind == ProviderKind.PLATFORM:
+            return "platform-default"
         if self.kind == ProviderKind.OPENAI_COMPATIBLE:
             raise ValueError("openai_compatible providers need an explicit model")
         return DEFAULT_MODELS[self.kind]
@@ -61,7 +67,9 @@ class ProviderConfig(BaseModel):
 
 class TenantLLMConfig(BaseModel):
     # Ordered fallback chain; the first entry is the primary provider.
-    chain: list[ProviderConfig] = Field(default_factory=lambda: [ProviderConfig(kind=ProviderKind.MOCK)], min_length=1, max_length=5)
+    chain: list[ProviderConfig] = Field(default_factory=lambda: [ProviderConfig(kind=ProviderKind.PLATFORM)], min_length=1, max_length=5)
+    # LPA-009: per-task model for the primary provider, e.g. {"analytics.suggest": "claude-sonnet-5"}.
+    task_models: dict[str, str] = Field(default_factory=dict, max_length=50)
     data_minimization: DataMinimization = DataMinimization.L2_MASKED_SAMPLES
     cache_enabled: bool = True
 
@@ -88,7 +96,28 @@ class MissingSecretError(LookupError):
     pass
 
 
-def build_provider(tenant_id: str, config: ProviderConfig, secrets: SecretStore) -> LLMProvider:
+def build_provider(
+    tenant_id: str,
+    config: ProviderConfig,
+    secrets: SecretStore,
+    *,
+    platform: dict[str, str | None] | None = None,
+) -> LLMProvider:
+    """Construct a provider. ``platform`` = {kind, model, base_url} of the platform-provided LLM (LPA-011)."""
+    if config.kind == ProviderKind.PLATFORM:
+        platform = platform or {}
+        kind = ProviderKind(platform.get("kind") or "mock")
+        if kind == ProviderKind.PLATFORM:
+            raise ValueError("the platform provider can't point at itself")
+        inner = ProviderConfig(
+            kind=kind,
+            model=config.model if config.model and config.model != "platform-default" else platform.get("model"),
+            base_url=platform.get("base_url"),
+            secret_name=PLATFORM_SECRET,
+        )
+        provider = build_provider("platform", inner, secrets)
+        provider.name = f"platform:{provider.name}"
+        return provider
     model = config.resolved_model()
     if config.kind == ProviderKind.MOCK:
         return MockProvider(model=model)

@@ -92,8 +92,20 @@ class Project(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("prj"))
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
+    # Open projects are visible to every member of the tenant (the Default project is open).
+    open: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
     __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+
+
+class ProjectMember(Base):
+    """AUTH-003: project membership. Admins see every project; others see open projects and their own."""
+
+    __tablename__ = "project_members"
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    added_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
 
 
 class Dataset(Base):

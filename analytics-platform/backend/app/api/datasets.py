@@ -18,6 +18,7 @@ from ..ingestion.formats import UnsupportedFormatError, load_sample
 from ..ingestion.inference import InferenceResult, infer_schema
 from ..llm.router import LLMOutputError, LLMUnavailableError
 from ..profiling.profile import DatasetProfile, profile_frame
+from ..projects import ProjectAccessDenied, check_project, default_project_id, visible_projects
 from ..schema.model import Schema, SchemaValidationError, ensure_valid
 from ..storage.datasets import DatasetNotFound, DatasetRecord, DatasetTooLarge, QuotaExceeded
 from .deps import AppState, StateDep, require
@@ -46,10 +47,28 @@ class SuggestRequest(BaseModel):
 
 
 def get_record(state: AppState, principal: Principal, dataset_id: str, version: int | None = None) -> DatasetRecord:
+    """Load a dataset version the caller may see (tenant + project access, AUTH-003)."""
     try:
-        return state.store.get(principal.tenant_id, dataset_id, version)
-    except DatasetNotFound as exc:
+        record = state.store.get(principal.tenant_id, dataset_id, version)
+        check_project(state, principal, record.project_id)
+        return record
+    except (DatasetNotFound, ProjectAccessDenied) as exc:
         raise HTTPException(status_code=404, detail="dataset not found") from exc
+
+
+def _target_project(state: AppState, principal: Principal, project_id: str | None) -> str:
+    project_id = project_id or default_project_id(state, principal.tenant_id)
+    try:
+        check_project(state, principal, project_id)
+    except ProjectAccessDenied as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+    with state.db.session(principal.tenant_id) as s:
+        from ..db.models import Project
+
+        project = s.get(Project, project_id)
+        if project is None or project.tenant_id != principal.tenant_id:
+            raise HTTPException(status_code=404, detail="project not found")
+    return project_id
 
 
 def _single(record: DatasetRecord):
@@ -108,6 +127,7 @@ async def upload_multipart(
     request: Request,
     file: UploadFile = File(...),
     x_content_sha256: str | None = Header(None),
+    project_id: str | None = Query(None),
     state: AppState = StateDep,
     principal: Principal = Writer,
 ) -> UploadResponse:
@@ -120,7 +140,10 @@ async def upload_multipart(
         while chunk := await file.read(CHUNK):
             yield chunk
 
-    return await _store_upload(state, principal, file.filename or "upload.csv", chunks(), expected_sha256=x_content_sha256)
+    project = _target_project(state, principal, project_id)
+    return await _store_upload(
+        state, principal, file.filename or "upload.csv", chunks(), expected_sha256=x_content_sha256, project_id=project
+    )
 
 
 @router.put("/upload", response_model=UploadResponse, status_code=201)
@@ -128,18 +151,25 @@ async def upload_stream(
     request: Request,
     filename: str = Query(..., min_length=1, max_length=255),
     x_content_sha256: str | None = Header(None),
+    project_id: str | None = Query(None),
     state: AppState = StateDep,
     principal: Principal = Writer,
 ) -> UploadResponse:
     """Raw-body streaming upload. The size limit is enforced before the transfer (Content-Length) and during it (ING-NFR-004)."""
     length = request.headers.get("content-length")
     declared = int(length) if length and length.isdigit() else None
-    return await _store_upload(state, principal, filename, request.stream(), declared_size=declared, expected_sha256=x_content_sha256)
+    project = _target_project(state, principal, project_id)
+    return await _store_upload(
+        state, principal, filename, request.stream(), declared_size=declared, expected_sha256=x_content_sha256, project_id=project
+    )
 
 
 @router.get("", response_model=list[DatasetRecord])
-async def list_datasets(state: AppState = StateDep, principal: Principal = Reader) -> list[DatasetRecord]:
-    return state.store.list(principal.tenant_id)
+async def list_datasets(project_id: str | None = None, state: AppState = StateDep, principal: Principal = Reader) -> list[DatasetRecord]:
+    allowed = visible_projects(state, principal)
+    if project_id is not None:
+        allowed = {project_id} if allowed is None or project_id in allowed else set()
+    return state.store.list(principal.tenant_id, allowed)
 
 
 @router.get("/{dataset_id}", response_model=DatasetRecord)
@@ -152,6 +182,7 @@ async def get_dataset(
 @router.get("/{dataset_id}/versions", response_model=list[DatasetRecord])
 async def list_versions(dataset_id: str, state: AppState = StateDep, principal: Principal = Reader) -> list[DatasetRecord]:
     """PIP-007: every upload and applied pipeline is an immutable version with lineage."""
+    get_record(state, principal, dataset_id)
     try:
         return state.store.versions(principal.tenant_id, dataset_id)
     except DatasetNotFound as exc:
@@ -226,7 +257,7 @@ async def suggestions(
         raise HTTPException(status_code=409, detail="confirm the dataset schema before requesting suggestions")
     _single(record)
     profile = await asyncio.to_thread(compute_profile, state, record)
-    llm = state.router(principal.tenant_id)
+    llm = state.router(principal.tenant_id, "analytics.suggest")
     level = state.llm_config(principal.tenant_id).data_minimization
     sample = await asyncio.to_thread(load_table, state.store, record, None, 20)
     con = await asyncio.to_thread(open_sandbox, sandbox_tables(state.store, record), renames=renames(record))

@@ -12,6 +12,21 @@ The shared contract between the backend and the frontend/SDKs. The FastAPI app a
 - `POST /v1/auth/mfa/setup` returns `{otpauth_uri}`. `POST /v1/auth/mfa/activate` `{code}`.
 - Every other call sends `Authorization: Bearer <access_token>`, or an API key as `X-API-Key: ap_live_…` / `Authorization: Bearer ap_live_…`.
 - Roles: `admin`, `data_engineer`, `data_scientist`, `analyst`, `viewer`.
+- SSO (OIDC):
+  - `GET /v1/auth/oidc/providers` returns `{providers}`.
+  - `GET /v1/auth/oidc/{provider}/authorize?redirect_uri=` returns `{authorization_url, state}`.
+  - `POST /v1/auth/oidc/{provider}/callback` `{code, state}` returns a token pair.
+  - Tenant admins claim email domains for just-in-time sign-up with `GET`/`PUT /v1/tenant/sso` `{domains, default_role}`.
+
+## Projects (`/v1/projects`)
+- `GET` lists the projects visible to the caller. `POST` `{name, open, members[]}` (admin only).
+- `POST /{id}/members` `{user_id}`. `DELETE /{id}/members/{user_id}`.
+- Datasets belong to a project: uploads take `?project_id=`, defaulting to the open "Default" project, and `GET /v1/datasets?project_id=` filters by project. Users who aren't admins see only open projects and the projects they belong to.
+
+## Quotas
+- Heavy jobs beyond `max_concurrent_jobs` get a 429 with `detail = {code: "quota_exceeded", quota, limit, message}`.
+- The platform-provided LLM (`chain: [{kind: "platform"}]`, the default) is capped at `llm_tokens_per_month`.
+- `task_models` in the LLM config picks a model per task (`analytics.suggest`, `schema.from_text`, `model.explain`).
 
 ## Tenant admin (`/v1/tenant`)
 - `GET` / `PATCH` / `DELETE ?confirm=<tenant>` on `/v1/tenant` itself.
@@ -133,7 +148,8 @@ DatasetRecord: `{id, tenant_id, name, version, latest_version, parent_version, p
 - `GET`, `PUT {name?, spec?}` and `DELETE` on `/v1/dashboards/{id}`.
 - `POST /v1/dashboards/{id}/clone`, `/archive`, `/share {user_id, role: editor|viewer}`.
 - `POST /v1/dashboards/{id}/widgets/{widget_id}/data` `{filters: {column: value | [values] | {min, max}}}` returns `{columns, rows}`.
-- `GET /v1/dashboards/{id}/export?format=html|json`.
+- `POST /v1/dashboards/{id}/export` `{filters}` returns a standalone interactive HTML file. JSON export is `GET /v1/dashboards/{id}`; PNG and PDF are rendered in the browser.
+- `POST /v1/dashboards/{id}/embed-token` `{ttl_minutes}` returns `{token}`. Then `GET /v1/embed/{token}` and `POST /v1/embed/{token}/widgets/{wid}/data` need no credentials.
 - `GET /v1/dashboards/templates`.
 - `spec`:
 

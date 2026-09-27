@@ -108,7 +108,7 @@ class AuthService:
             s.flush()
             user = User(tenant_id=tenant_id, email=email.lower(), name=name, password_hash=_hasher.hash(password), role=Role.ADMIN.value)
             s.add(user)
-            s.add(Project(tenant_id=tenant_id, name="Default"))
+            s.add(Project(tenant_id=tenant_id, name="Default", open=True))
         return user
 
     def create_user(self, tenant_id: str, *, email: str, role: Role, password: str, name: str | None = None) -> User:
@@ -223,6 +223,35 @@ class AuthService:
                 raise AuthError("account is disabled", "disabled")
             role = user.role
         return Principal(tenant_id=claims["tid"], user_id=claims["sub"], role=role, method="jwt", email=claims.get("email"))
+
+    # -- SSO (AUTH-001) ------------------------------------------------------
+    def sso_login(self, email: str, provider: str, subject: str) -> TokenPair:
+        """Log in a user authenticated by an OIDC provider.
+
+        Existing users are matched by verified email. Unknown users are provisioned just-in-time
+        only if some tenant has claimed the email's domain in its SSO settings.
+        """
+        from ..db.models import TenantSetting
+
+        email = email.lower()
+        domain = email.rsplit("@", 1)[-1]
+        with self.db.session() as s:
+            user = s.execute(select(User).where(func.lower(User.email) == email)).scalar_one_or_none()
+            if user is None:
+                for setting in s.execute(select(TenantSetting).where(TenantSetting.key == "sso")).scalars():
+                    if domain in [d.lower() for d in setting.value.get("domains", [])]:
+                        role = setting.value.get("default_role", Role.VIEWER.value)
+                        user = User(tenant_id=setting.tenant_id, email=email, password_hash="!sso-only", role=role)
+                        s.add(user)
+                        s.flush()
+                        break
+            if user is None:
+                raise AuthError("no account for this email; ask your admin to invite you", "sso_no_account")
+            tenant = s.get(Tenant, user.tenant_id)
+            if user.disabled or tenant is None or tenant.status != "active":
+                raise AuthError("account is disabled or the organization is suspended", "disabled")
+            user.last_login_at = datetime.now(UTC)
+            return self._issue(s, user)
 
     # -- MFA (TOTP) --------------------------------------------------------
     def _mfa_secret_name(self, user_id: str) -> str:

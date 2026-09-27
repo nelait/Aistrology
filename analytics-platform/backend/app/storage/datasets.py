@@ -73,6 +73,7 @@ class TableRecord(BaseModel):
 class DatasetRecord(BaseModel):
     id: str
     tenant_id: str
+    project_id: str | None = None
     name: str
     version: int = 1
     latest_version: int = 1
@@ -108,6 +109,7 @@ def _to_record(ds: Dataset, v: DatasetVersion) -> DatasetRecord:
     return DatasetRecord(
         id=ds.id,
         tenant_id=ds.tenant_id,
+        project_id=ds.project_id,
         name=ds.name,
         version=v.version,
         latest_version=ds.current_version,
@@ -306,6 +308,7 @@ class DatasetStore:
         dataset_id: str | None = None,
         pipeline_id: str | None = None,
         pipeline_hash: str | None = None,
+        project_id: str | None = None,
     ) -> DatasetRecord:
         """Persist frames as Parquet. With ``dataset_id``, this creates the next immutable version of that dataset."""
         _check_tenant(tenant_id)
@@ -356,6 +359,7 @@ class DatasetStore:
             parent_version=parent,
             pipeline_id=pipeline_id,
             pipeline_hash=pipeline_hash,
+            project_id=project_id,
         )
 
     def update_schema(self, record: DatasetRecord, schema: Schema) -> DatasetRecord:
@@ -415,13 +419,17 @@ class DatasetStore:
             ).scalars()
             return [_to_record(ds, v) for v in rows]
 
-    def list(self, tenant_id: str) -> list[DatasetRecord]:
+    def list(self, tenant_id: str, projects: set[str] | None = None) -> list[DatasetRecord]:
+        """Current versions of the tenant's datasets; ``projects`` restricts to those project ids."""
         _check_tenant(tenant_id)
         with self.db.session(tenant_id) as s:
-            rows = s.execute(
+            q = (
                 select(Dataset, DatasetVersion)
                 .join(DatasetVersion, (DatasetVersion.dataset_id == Dataset.id) & (DatasetVersion.version == Dataset.current_version))
                 .where(Dataset.tenant_id == tenant_id, Dataset.deleted_at.is_(None))
                 .order_by(Dataset.created_at.desc())
-            ).all()
+            )
+            if projects is not None:
+                q = q.where(Dataset.project_id.in_(projects))
+            rows = s.execute(q).all()
             return [_to_record(ds, v) for ds, v in rows]

@@ -15,7 +15,7 @@ from ..auth.service import Principal
 from ..jobs.core import JobOut, JobService, notify
 from ..serving.service import EndpointCreate, EndpointOut, EndpointPatch, ServingError, ServingService
 from ..training.service import NotFound
-from .deps import AppState, StateDep, require
+from .deps import AppState, StateDep, guard_dataset, require
 
 router = APIRouter(prefix="/v1/endpoints", tags=["serving"])
 Deployer = require(Permission.DEPLOY)
@@ -116,6 +116,7 @@ async def batch(
             body = BatchBody.model_validate(await request.json())
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=422, detail="send a multipart file or JSON {dataset_id}") from exc
+        guard_dataset(state, principal, body.dataset_id)
         params["dataset_id"] = body.dataset_id
     return JobService(state).submit(principal.tenant_id, "serving.batch_predict", params, principal.user_id)
 
