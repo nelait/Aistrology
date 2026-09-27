@@ -30,7 +30,7 @@ def _set_quotas(state, **quotas):
 
 
 def req() -> LLMRequest:
-    return LLMRequest(messages=[Message(role="user", content="x" * 400)], task="analytics.suggest")
+    return LLMRequest(messages=[Message(role="user", content="x" * 400)], task="quota.test")
 
 
 def test_platform_llm_is_metered_and_capped_with_byok_fallback(state):

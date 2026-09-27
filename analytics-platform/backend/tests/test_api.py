@@ -235,3 +235,16 @@ def test_llm_config_and_secrets_are_write_only(client):
     everything = json.dumps(client.get("/v1/tenant/audit", headers=ACME).json()) + json.dumps(r.json())
     assert "sk-ant-secret" not in everything
     assert client.get("/v1/tenant/secrets", headers=GLOBEX).json() == {"names": []}
+
+
+def test_offline_demo_llm_works_end_to_end(client):
+    """With no LLM configured, the platform mock gives usable, sandbox-validated suggestions."""
+    dataset_id = upload(client).json()["dataset"]["id"]
+    r = client.post(f"/v1/datasets/{dataset_id}/suggestions", json={}, headers=ACME)
+    assert r.status_code == 200, r.text
+    suggestions = r.json()
+    assert len(suggestions) >= 3 and all(s["valid"] for s in suggestions), [s.get("validation_error") for s in suggestions]
+    parsed = client.post(
+        "/v1/schemas/parse", json={"format": "natural_language", "content": "customers with name, email and date of birth"}, headers=ACME
+    )
+    assert parsed.status_code == 200 and {f["name"] for f in parsed.json()["schema"]["entities"][0]["fields"]} >= {"email", "date_of_birth"}

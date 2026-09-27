@@ -12,7 +12,7 @@ Responder = Callable[[LLMRequest], str]
 class MockProvider(LLMProvider):
     def __init__(
         self,
-        responder: Responder | str | list[str] = "{}",
+        responder: Responder | str | list[str] | None = None,
         *,
         name: str = "mock",
         model: str = "mock-1",
@@ -25,6 +25,11 @@ class MockProvider(LLMProvider):
         self._responses = list(responder) if isinstance(responder, list) else None
         self._responder = responder if callable(responder) else None
         self._constant = responder if isinstance(responder, str) else None
+        if responder is None:
+            # Default: task-aware offline demo output (see demo.py).
+            from .demo import demo_response
+
+            self._responder = demo_response
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         self.calls.append(request)
