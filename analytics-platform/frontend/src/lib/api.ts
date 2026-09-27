@@ -352,6 +352,14 @@ async function readDetail(res: Response): Promise<unknown> {
   }
 }
 
+/** `http(s)://host/base` + `/path?q` → `ws(s)://host/base/path?q` (relative bases resolve against the page). */
+export function wsUrl(baseUrl: string, path: string): string {
+  const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost";
+  const u = new URL(baseUrl.replace(/\/+$/, "") + (path.startsWith("/") ? path : `/${path}`), origin);
+  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+  return u.toString();
+}
+
 export function filenameFromDisposition(header: string | null): string | null {
   if (!header) return null;
   const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
@@ -473,7 +481,41 @@ export const api = {
       client.put<T.AnnotationsOut>(`/v1/datasets/${enc(id)}/annotations`, body),
     advancedProfile: (id: string, body: T.AdvancedProfileRequest, opts: { version?: number; table?: string } = {}) =>
       client.post<T.AdvancedProfile>(`/v1/datasets/${enc(id)}/profile/advanced`, body, { version: opts.version, table: opts.table }),
+    /** FE-005a: 2-D UMAP / t-SNE / PCA embedding of a sample of rows (visualization only). */
+    projection: (id: string, body: T.ProjectionRequest, version?: number) => client.post<T.ProjectionResult>(`/v1/datasets/${enc(id)}/projection`, body, { version }),
   },
+
+  /** ING-008 append-only stream datasets. */
+  streams: {
+    create: (body: T.StreamCreate) => client.post<T.DatasetRecord>("/v1/streams", body),
+    get: (id: string) => client.get<T.StreamStatus>(`/v1/streams/${enc(id)}`),
+    push: (id: string, records: Record<string, unknown>[]) => client.post<T.StreamPushResult>(`/v1/streams/${enc(id)}/records`, { records }),
+    compact: (id: string) => client.post<T.Job>(`/v1/streams/${enc(id)}/compact`),
+    recordsUrl: (id: string) => client.url(`/v1/streams/${enc(id)}/records`),
+  },
+
+  /** USR-007 / SHR-004: cron-scheduled jobs. */
+  schedules: {
+    types: () => client.get<T.ScheduleType[]>("/v1/schedules/types"),
+    list: (job_type?: string) => client.get<T.Schedule[]>("/v1/schedules", { job_type }),
+    get: (id: string) => client.get<T.Schedule>(`/v1/schedules/${enc(id)}`),
+    create: (body: T.ScheduleCreate) => client.post<T.Schedule>("/v1/schedules", body),
+    update: (id: string, body: T.SchedulePatch) => client.patch<T.Schedule>(`/v1/schedules/${enc(id)}`, body),
+    remove: (id: string) => client.del(`/v1/schedules/${enc(id)}`),
+    run: (id: string) => client.post<T.ScheduleRunResult>(`/v1/schedules/${enc(id)}/run`),
+  },
+
+  /** LLM-009 suggestion feedback and learned preferences. */
+  suggestions: {
+    feedback: (datasetId: string, body: T.SuggestionFeedback) =>
+      client.post<T.SuggestionPreferences>(`/v1/datasets/${enc(datasetId)}/suggestions/feedback`, body),
+    preferences: () => client.get<T.SuggestionPreferences>("/v1/suggestions/preferences"),
+    resetPreferences: () => client.del("/v1/suggestions/preferences"),
+  },
+
+  /** API-003 */
+  graphql: <D = Record<string, unknown>>(query: string, variables?: Record<string, unknown>) =>
+    client.post<T.GraphQLResponse<D>>("/graphql", { query, variables: variables && Object.keys(variables).length ? variables : undefined }),
 
   connectors: {
     list: () => client.get<T.Connector[]>("/v1/connectors"),
@@ -581,6 +623,11 @@ export const api = {
     deleteTemplate: (id: string) => client.del(`/v1/training-templates/${enc(id)}`),
     applyTemplate: (id: string, body: { name: string; dataset_id: string; dataset_version?: number; overrides: T.TrainingConfig }) =>
       client.post<{ experiment: T.Experiment; job: T.Job; template_id: string }>(`/v1/training-templates/${enc(id)}/apply`, body),
+    /** XAI-004 per-group metrics on the held-out test set (409 holdout_missing for older runs). */
+    fairness: (runId: string, body: { protected: string[]; positive_class?: T.JsonValue; min_group_size?: number }) =>
+      client.post<T.FairnessReport>(`/v1/runs/${enc(runId)}/fairness`, body),
+    /** FE-005a projection through the run's preprocessing, coloured by predictions. */
+    projection: (runId: string, body: T.ProjectionRequest) => client.post<T.ProjectionResult>(`/v1/runs/${enc(runId)}/projection`, body),
   },
 
   models: {
@@ -588,6 +635,20 @@ export const api = {
     list: () => client.get<T.RegisteredModel[]>("/v1/models"),
     get: (id: string) => client.get<T.ModelDetail>(`/v1/models/${enc(id)}`),
     setStage: (id: string, version: number, stage: T.Stage) => client.post<T.ModelDetail>(`/v1/models/${enc(id)}/versions/${version}/stage`, { stage }),
+    /** TRN-010: register an ONNX file with a JSON signature (422 {code: "model_rejected", message}). */
+    upload: (
+      body: { file: File; signature: T.UploadSignature; name: string; description?: string; dataset_id?: string },
+      onProgress?: (p: UploadProgress) => void,
+      signal?: AbortSignal,
+    ) => {
+      const form = new FormData();
+      form.append("file", body.file, body.file.name);
+      form.append("signature", JSON.stringify(body.signature));
+      form.append("name", body.name);
+      if (body.description) form.append("description", body.description);
+      if (body.dataset_id) form.append("dataset_id", body.dataset_id);
+      return client.upload<T.ModelUploadResponse>("/v1/models/upload", form, onProgress, signal);
+    },
   },
 
   endpoints: {
@@ -612,6 +673,21 @@ export const api = {
     forecast: (name: string, body: { horizon?: number; history?: Record<string, unknown>[] }) => client.post<T.ForecastResponse>(`/v1/endpoints/${enc(name)}/predict`, body),
     drift: (name: string, hours = 24) => client.get<T.DriftReport>(`/v1/endpoints/${enc(name)}/drift`, { hours }),
     driftCheck: (name: string, hours = 24) => client.post<T.Job>(`/v1/endpoints/${enc(name)}/drift/check`, { hours }),
+    // API-009 canary rollouts
+    canary: (name: string) => client.get<T.CanaryRollout>(`/v1/endpoints/${enc(name)}/canary`),
+    startCanary: (name: string, body: T.CanaryStart) => client.post<T.CanaryRollout>(`/v1/endpoints/${enc(name)}/canary`, body),
+    promoteCanary: (name: string) => client.post<T.CanaryRollout>(`/v1/endpoints/${enc(name)}/canary/promote`),
+    abortCanary: (name: string) => client.post<T.CanaryRollout>(`/v1/endpoints/${enc(name)}/canary/abort`),
+    // API-006 streaming inference
+    /** Server-Sent Events response (read it with `readSse`). */
+    predictStream: (
+      name: string,
+      body: { instances?: Record<string, unknown>[]; chunk_size?: number; explain?: boolean; horizon?: number; history?: Record<string, unknown>[] },
+      signal?: AbortSignal,
+    ) => client.raw(`/v1/endpoints/${enc(name)}/predict/stream`, { method: "POST", json: body, signal, headers: { Accept: "text/event-stream" } }),
+    streamToken: (name: string) => client.post<T.StreamToken>(`/v1/endpoints/${enc(name)}/stream-token`),
+    /** Absolute ws(s):// URL for a stream-token `url` (path + query). */
+    wsUrl: (path: string) => wsUrl(client.baseUrl, path),
   },
 
   analytics: {
@@ -621,6 +697,10 @@ export const api = {
     remove: (id: string) => client.del(`/v1/analytics/${enc(id)}`),
     run: (id: string, params: Record<string, unknown>, filters: Record<string, T.FilterValue> = {}) =>
       client.post<T.TabularResult>(`/v1/analytics/${enc(id)}/run`, { params, filters }),
+    /** LLM-008: SQL across datasets registered under their aliases. */
+    multiQuery: (datasets: Record<string, string>, sql: string, row_limit = 1000) => client.post<T.QueryResult>("/v1/analytics/query", { datasets, sql, row_limit }),
+    multiSuggestions: (datasets: Record<string, string>, question?: string) =>
+      client.post<T.MultiSuggestions>("/v1/analytics/suggestions", { datasets, question: question || undefined }),
   },
 
   dashboards: {
@@ -648,6 +728,14 @@ export const api = {
     publicView: (token: string) => client.request<T.Dashboard>(`/v1/public/${enc(token)}`, { auth: false }),
     publicWidgetData: (token: string, widgetId: string, filters: Record<string, T.FilterValue>, signal?: AbortSignal) =>
       client.request<T.TabularResult>(`/v1/public/${enc(token)}/widgets/${enc(widgetId)}/data`, { method: "POST", json: { filters }, auth: false, signal }),
+    // SHR-005 comments
+    comments: (id: string, opts: { widget_id?: string; include_resolved?: boolean } = {}) =>
+      client.get<T.CommentThread[]>(`/v1/dashboards/${enc(id)}/comments`, { widget_id: opts.widget_id, include_resolved: opts.include_resolved }),
+    addComment: (id: string, body: { body: string; widget_id?: string | null; parent_id?: string | null }) =>
+      client.post<T.DashboardComment>(`/v1/dashboards/${enc(id)}/comments`, { body: body.body, widget_id: body.widget_id || undefined, parent_id: body.parent_id || undefined }),
+    updateComment: (id: string, commentId: string, body: { body?: string; resolved?: boolean }) =>
+      client.patch<T.DashboardComment>(`/v1/dashboards/${enc(id)}/comments/${enc(commentId)}`, body),
+    deleteComment: (id: string, commentId: string) => client.del(`/v1/dashboards/${enc(id)}/comments/${enc(commentId)}`),
   },
 
   webhooks: {

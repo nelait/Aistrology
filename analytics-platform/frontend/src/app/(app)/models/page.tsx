@@ -1,17 +1,32 @@
 "use client";
 import Link from "next/link";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
-import { Badge, Card, EmptyState, PageHeader, QueryState } from "@/components/ui";
+import { useAuth } from "@/lib/auth";
+import { UploadModelDialog } from "@/components/models/UploadModelDialog";
+import { Badge, Button, Card, EmptyState, PageHeader, QueryState } from "@/components/ui";
 
 export default function ModelsPage() {
+  const { can } = useAuth();
   const q = useQuery({ queryKey: ["models"], queryFn: api.models.list });
+  const [uploadOpen, setUploadOpen] = useState(false);
   return (
     <div className="space-y-5">
-      <PageHeader title="Model registry" description="Versioned models with stage tags (staging, production, archived) and rollback." />
+      <PageHeader
+        title="Model registry"
+        description="Versioned models with stage tags (staging, production, archived) and rollback. Register a training run, or upload your own ONNX model."
+        actions={
+          can("models.train") && (
+            <Button variant="primary" onClick={() => setUploadOpen(true)}>
+              Upload ONNX model
+            </Button>
+          )
+        }
+      />
       <Card bodyClassName="p-0">
-        <QueryState query={q} empty={(l) => (l.length ? null : <div className="p-4"><EmptyState title="No registered models">Register the best run of an experiment to see it here.</EmptyState></div>)}>
+        <QueryState query={q} empty={(l) => (l.length ? null : <div className="p-4"><EmptyState title="No registered models">Register the best run of an experiment, or upload an ONNX model.</EmptyState></div>)}>
           {(list) => (
             <ul className="divide-y divide-[var(--border)]">
               {list.map((m) => (
@@ -31,6 +46,7 @@ export default function ModelsPage() {
           )}
         </QueryState>
       </Card>
+      <UploadModelDialog open={uploadOpen} onClose={() => setUploadOpen(false)} />
     </div>
   );
 }

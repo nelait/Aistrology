@@ -536,7 +536,7 @@ export interface Notification {
 // -- Training -------------------------------------------------------------------
 
 export type SupervisedProblemType = "binary" | "multiclass" | "regression";
-export type ProblemType = SupervisedProblemType | "clustering" | "forecasting";
+export type ProblemType = SupervisedProblemType | "clustering" | "forecasting" | "anomaly";
 
 export interface Hyperparameter {
   name: string;
@@ -561,7 +561,7 @@ export interface DetectResponse {
   problem_type: ProblemType;
   reason?: string;
   /** MDL-002a: a numeric target on a regular date index can also be forecast */
-  alternatives?: { problem_type: ProblemType; time_column?: string; frequency?: string; reason?: string }[];
+  alternatives?: { problem_type: ProblemType; time_column?: string; frequency?: string; reason?: string; label_column?: string; positive_label?: JsonValue }[];
   /** backend returns [{value, count}] (top 100 classes) */
   classes?: ({ value: string; count: number } | JsonValue)[] | null;
   imbalance_hint?: string;
@@ -589,6 +589,8 @@ export interface ExperimentCreate {
     auto_features?: { interactions: boolean; polynomial: boolean; top_k: number } | null;
     /** FE-005: < 1 = share of variance kept, >= 1 = number of components */
     pca?: { n_components: number } | null;
+    /** FE-006 free-text columns as TF-IDF features */
+    text?: TextFeatures | null;
   };
   class_imbalance: "none" | "class_weight" | "smote" | "undersample" | "oversample";
   max_training_seconds: number;
@@ -599,6 +601,26 @@ export interface ExperimentCreate {
   clustering?: { k_min: number; k_max: number; max_fit_rows?: number } | null;
   /** TRN-007 */
   forecast?: ForecastConfig | null;
+  /** TRN-008 */
+  anomaly?: AnomalyConfig | null;
+  /** XAI-004: PII-tagged columns to keep with the held-out predictions for fairness analysis */
+  fairness?: { protected: string[] };
+}
+
+export interface TextFeatures {
+  method: "tfidf";
+  max_features: number;
+  ngram_max: number;
+  svd_components?: number | null;
+  columns?: string[] | null;
+}
+
+export interface AnomalyConfig {
+  /** 0 < x ≤ 0.5; null = the label rate, else 0.05 */
+  contamination?: number | null;
+  threshold: "contamination" | "f1";
+  positive_label?: string | null;
+  max_fit_rows?: number;
 }
 
 export interface ForecastConfig {
@@ -652,7 +674,7 @@ export interface RunArtifacts {
   calibration?: { prob_pred: number[]; prob_true: number[] };
   residuals?: { predicted: number[]; residual: number[] };
   learning_curve?: { train_sizes: number[]; train_scores: number[]; val_scores: number[] };
-  feature_importance?: { feature: string; importance: number }[];
+  feature_importance?: { feature: string; importance: number; direction?: "higher" | "lower" | string }[];
   permutation_importance?: { feature: string; importance: number; std?: number }[];
   shap_summary?: { feature: string; mean_abs_shap: number }[];
   pdp?: Record<string, { grid: number[]; average: number[] }>;
@@ -676,6 +698,11 @@ export interface RunArtifacts {
   forecast?: { timestamps: string[]; forecast: number[]; lower?: number[]; upper?: number[]; interval_level?: number };
   frequency?: string;
   season_length?: number | null;
+  // TRN-008 anomaly detection
+  score_distribution?: { edges: number[]; counts: number[]; counts_normal?: number[]; counts_anomaly?: number[] };
+  threshold?: number;
+  top_anomalies?: { row: number; score: number }[];
+  positive_label?: JsonValue;
   [key: string]: unknown;
 }
 
@@ -827,6 +854,8 @@ export interface PredictResponse {
   shap?: Record<string, number>[] | null;
   base_value?: number | number[] | null;
   explanations?: Record<string, number>[] | null;
+  /** anomaly endpoints: predictions are {is_anomaly, score} and this is the score threshold */
+  threshold?: number | null;
 }
 
 /** Forecasting endpoint response */
@@ -1371,3 +1400,323 @@ export type InboundHookWithSecret = InboundHook & { secret: string; signature_he
 export type InboundHookCreate =
   | { name: string; action: "predict"; endpoint: string }
   | { name: string; action: "ingest"; dataset_id: string; mode: "append" | "replace" };
+
+// -- Phase 3: schedules (USR-007, SHR-004) ----------------------------------------------
+
+export type ScheduleJobType =
+  | "analytics.scheduled_run"
+  | "dashboard.deliver"
+  | "serving.drift_check"
+  | "serving.canary_step"
+  | "stream.compact"
+  | "dataset.profile"
+  | "pipeline.apply";
+
+export interface ScheduleType {
+  job_type: ScheduleJobType | string;
+  permission: PermissionName;
+  description: string;
+  /** the caller holds the permission */
+  allowed: boolean;
+}
+
+export interface AnalyticSnapshot {
+  kind: "analytic";
+  analytic_id: string;
+  name: string;
+  job_id: string;
+  columns: string[];
+  rows: unknown[][];
+  row_count: number;
+  truncated: boolean;
+  at: string;
+}
+
+export interface DashboardSnapshot {
+  kind: "dashboard";
+  dashboard_id: string;
+  name: string;
+  job_id: string;
+  size_bytes: number;
+  link_kind: "public" | "app";
+  at: string;
+}
+
+export interface Schedule {
+  id: string;
+  name: string;
+  cron: string;
+  timezone: string;
+  job_type: ScheduleJobType | string;
+  params: Record<string, unknown>;
+  enabled: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_job_id: string | null;
+  /** submitted | succeeded | failed | skipped … */
+  last_status: string | null;
+  last_error: string | null;
+  last_result: AnalyticSnapshot | DashboardSnapshot | Record<string, unknown> | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  /** next 5 runs (UTC ISO) on create / get / patch */
+  upcoming?: string[];
+}
+
+export interface ScheduleCreate {
+  name: string;
+  cron: string;
+  timezone?: string;
+  job_type: string;
+  params: Record<string, unknown>;
+  enabled?: boolean;
+}
+
+export type SchedulePatch = Partial<Pick<ScheduleCreate, "name" | "cron" | "timezone" | "params" | "enabled">>;
+
+export interface ScheduleRunResult {
+  schedule_id: string;
+  status: "submitted" | string;
+  job_id: string;
+}
+
+// -- Phase 3: comments (SHR-005) ---------------------------------------------------------
+
+export interface DashboardComment {
+  id: string;
+  dashboard_id: string;
+  widget_id: string | null;
+  parent_id: string | null;
+  author_id: string;
+  body: string;
+  mentions: string[];
+  resolved: boolean;
+  created_at: string;
+  edited_at: string | null;
+}
+
+export interface CommentThread extends DashboardComment {
+  replies: DashboardComment[];
+}
+
+// -- Phase 3: multi-dataset analytics & personalization (LLM-008/009) ----------------------
+
+export interface JoinCandidate {
+  left_table: string;
+  left_column: string;
+  right_table: string;
+  right_column: string;
+  /** share of distinct left values found on the right (0–1) */
+  containment: number;
+}
+
+export interface MultiSuggestions {
+  suggestions: Suggestion[];
+  join_candidates: JoinCandidate[];
+}
+
+export interface SuggestionFeedback {
+  accepted: boolean;
+  suggestion: { chart_type: string; category: string; title?: string };
+}
+
+export type PreferenceCounts = Record<string, { accepted: number; rejected: number }>;
+
+export interface SuggestionPreferences {
+  preferences: { chart_type?: PreferenceCounts; category?: PreferenceCounts };
+  summary: string | null;
+}
+
+// -- Phase 3: streaming ingestion (ING-008) ---------------------------------------------------
+
+export interface StreamCreate {
+  name: string;
+  project_id?: string;
+  columns?: string[];
+  compact_rows?: number;
+  compact_bytes?: number;
+}
+
+export interface StreamStatus {
+  dataset_id: string;
+  name: string;
+  version: number;
+  stored_bytes: number;
+  stored_rows: number;
+  buffered_rows: number;
+  buffered_bytes: number;
+  buffered_batches: number;
+  compact_rows: number;
+  compact_bytes: number;
+  max_dataset_bytes: number;
+  compacting_job_id: string | null;
+  last_compacted_at: string | null;
+}
+
+export interface StreamPushResult {
+  dataset_id: string;
+  accepted: number;
+  buffered_rows: number;
+  buffered_bytes: number;
+  compaction_job_id?: string | null;
+}
+
+// -- Phase 3: fairness (XAI-004) and projections (FE-005a) --------------------------------------
+
+export interface FairnessGroup {
+  group: string;
+  n: number;
+  selection_rate: number | null;
+  base_rate: number | null;
+  tpr: number | null;
+  fpr: number | null;
+  precision: number | null;
+  accuracy: number | null;
+  selection_ratio: number | null;
+  small_group: boolean;
+}
+
+export interface FairnessAttribute {
+  attribute: string;
+  grouping: "categories" | "quartiles" | string;
+  groups: FairnessGroup[];
+  demographic_parity_difference: number | null;
+  demographic_parity_ratio: number | null;
+  equalized_odds_difference: number | null;
+  four_fifths_rule: { threshold: number; passed: boolean | null; flagged_groups: string[] };
+}
+
+export interface FairnessReport {
+  run_id: string;
+  positive_class: JsonValue;
+  n_test: number;
+  min_group_size: number;
+  attributes: FairnessAttribute[];
+}
+
+export type ProjectionMethod = "auto" | "umap" | "tsne" | "pca";
+
+export interface ProjectionRequest {
+  method: ProjectionMethod;
+  features?: string[];
+  color_by?: string;
+  sample?: number;
+  perplexity?: number;
+  n_neighbors?: number;
+  seed?: number;
+}
+
+export interface ProjectionResult {
+  method: string;
+  n: number;
+  total_rows: number;
+  x: number[];
+  y: number[];
+  color_by?: string | null;
+  color?: JsonValue[] | null;
+  features?: string[] | null;
+  actual?: JsonValue[] | null;
+  note?: string;
+}
+
+// -- Phase 3: custom model upload (TRN-010) -------------------------------------------------------
+
+export type UploadFeatureType = "number" | "integer" | "string" | "boolean";
+
+export interface UploadFeature {
+  name: string;
+  type: UploadFeatureType;
+  categories?: string[];
+  min?: number;
+  max?: number;
+}
+
+export interface UploadSignature {
+  problem_type: SupervisedProblemType;
+  target?: string;
+  classes?: JsonValue[];
+  features: UploadFeature[];
+  input: "auto" | "per_feature" | "tensor";
+  outputs?: { label?: string; probabilities?: string; value?: string };
+}
+
+export interface ModelUploadResponse {
+  model_id: string;
+  name: string;
+  version: number;
+  model_version_id: string;
+  stage: Stage;
+  run_id: string;
+  sha256: string;
+  input_mode: string;
+  reference_dataset_id: string | null;
+}
+
+// -- Phase 3: canary rollouts (API-009) and streaming inference (API-006) ---------------------------
+
+export interface CanaryStart {
+  model_version_id: string;
+  steps: number[];
+  step_minutes: number;
+  max_error_rate: number;
+  max_p95_ms_increase: number;
+  min_requests: number;
+}
+
+export interface CanaryWindowStats {
+  requests: number;
+  errors: number;
+  error_rate: number | null;
+  p95_ms: number | null;
+}
+
+export interface CanaryHistoryEntry {
+  at: string;
+  /** start | ramp | hold | completed | rolled_back | aborted | promoted … */
+  event: string;
+  weight?: number;
+  reason?: string | null;
+  metrics?: { canary?: CanaryWindowStats; baseline?: CanaryWindowStats } | null;
+}
+
+export interface CanaryRollout {
+  id: string;
+  endpoint: string;
+  status: "running" | "completed" | "rolled_back" | "aborted" | string;
+  candidate: { model_version_id: string; model_id: string; version: number };
+  baseline_routes: EndpointRouteOut[];
+  steps: number[];
+  step_index: number;
+  weight: number;
+  step_minutes?: number;
+  thresholds: { max_error_rate: number; max_p95_ms_increase: number; min_requests: number };
+  reason: string | null;
+  history: CanaryHistoryEntry[];
+  step_started_at: string | null;
+  next_eval_at: string | null;
+  created_by?: string;
+  created_at?: string;
+  finished_at?: string | null;
+  live?: { canary: CanaryWindowStats; baseline: CanaryWindowStats };
+}
+
+export interface StreamToken {
+  token: string;
+  expires_in: number;
+  /** path + query, e.g. /v1/endpoints/{name}/ws?token=… */
+  url: string;
+}
+
+/** Anomaly endpoints return one of these per instance. */
+export interface AnomalyPrediction {
+  is_anomaly: boolean;
+  score: number;
+}
+
+// -- Phase 3: GraphQL (API-003) ------------------------------------------------------------------
+
+export interface GraphQLResponse<D = Record<string, unknown>> {
+  data?: D | null;
+  errors?: { message: string; path?: (string | number)[]; locations?: { line: number; column: number }[] }[];
+}

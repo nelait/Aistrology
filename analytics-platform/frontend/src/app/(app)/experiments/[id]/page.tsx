@@ -12,6 +12,9 @@ import { RunCharts } from "@/components/experiments/RunCharts";
 import { Compare } from "@/components/experiments/Compare";
 import { WhatIf } from "@/components/experiments/WhatIf";
 import { JobProgress } from "@/components/JobProgress";
+import { FairnessPanel } from "@/components/experiments/FairnessPanel";
+import { ProjectionPanel } from "@/components/ProjectionPanel";
+import { schemaColumns } from "@/lib/data";
 import { Badge, Button, Card, EmptyState, KeyValue, Modal, PageHeader, QueryState, StatusBadge, TabPanel, Tabs, TextArea, TextField } from "@/components/ui";
 
 const LOWER_IS_BETTER = /(mae|mse|rmse|mape|mase|smape|loss|error|davies|interval_width)/i;
@@ -50,7 +53,9 @@ function primaryMetric(runs: Run[], problem?: string | null): string | null {
         ? ["silhouette", "calinski_harabasz"]
         : problem === "forecasting"
           ? ["mase", "smape", "mae"]
-          : ["roc_auc", "f1", "f1_macro", "accuracy"];
+          : problem === "anomaly"
+            ? ["pr_auc", "roc_auc", "f1", "cv_score"]
+            : ["roc_auc", "f1", "f1_macro", "accuracy"];
   return pref.find((p) => names.includes(p)) ?? names[0] ?? null;
 }
 
@@ -78,7 +83,9 @@ function ExperimentView({ experiment, runs, job }: { experiment: Experiment; run
 
   const bestId = runs.find((r) => r.artifacts?.is_best)?.id ?? sorted.find((r) => r.status === "succeeded")?.id ?? sorted[0]?.id;
   const activeRunId = runId ?? bestId ?? null;
-  const run = useQuery({ queryKey: ["run", activeRunId], queryFn: () => api.training.run(activeRunId!), enabled: !!activeRunId && (tab === "run" || tab === "whatif") });
+  const run = useQuery({ queryKey: ["run", activeRunId], queryFn: () => api.training.run(activeRunId!), enabled: !!activeRunId && (tab === "run" || tab === "whatif" || tab === "fairness") });
+  const classification = problemType === "binary" || problemType === "multiclass";
+  const dataset = useQuery({ queryKey: ["dataset", experiment.dataset_id, experiment.dataset_version ?? null], queryFn: () => api.datasets.get(experiment.dataset_id, experiment.dataset_version ?? undefined), enabled: tab === "fairness", meta: { silent: true } });
 
   const register = useMutation({
     mutationFn: () => api.models.register({ name: modelName, run_id: activeRunId!, description: description || undefined }),
@@ -159,7 +166,9 @@ function ExperimentView({ experiment, runs, job }: { experiment: Experiment; run
           { id: "leaderboard", label: `Leaderboard (${runs.length})` },
           { id: "run", label: "Run details" },
           { id: "compare", label: `Compare${selected.length ? ` (${selected.length})` : ""}` },
-          { id: "whatif", label: "What-if", hidden: problemType === "clustering" || problemType === "forecasting" },
+          { id: "whatif", label: "What-if", hidden: problemType === "clustering" || problemType === "forecasting" || problemType === "anomaly" },
+          { id: "fairness", label: "Fairness", hidden: !classification },
+          { id: "projection", label: "Projection", hidden: problemType === "forecasting" },
         ]}
       />
       <TabPanel id={tab}>
@@ -249,6 +258,21 @@ function ExperimentView({ experiment, runs, job }: { experiment: Experiment; run
         )}
         {tab === "compare" && <Compare runIds={selected} />}
         {tab === "whatif" && <QueryState query={run}>{(r) => <WhatIf run={r} experiment={experiment} />}</QueryState>}
+        {tab === "fairness" && activeRunId && (
+          <div className="space-y-2">
+            <p className="text-sm text-[var(--text-2)]">
+              Run <span className="font-mono">{activeRunId.slice(0, 8)}</span> ({runs.find((r) => r.id === activeRunId)?.algorithm}). Pick another run from the leaderboard with “Details”.
+            </p>
+            <FairnessPanel
+              key={activeRunId}
+              runId={activeRunId}
+              columns={schemaColumns(dataset.data?.schema).map((c) => c.name)}
+              target={experiment.config.target}
+              classes={run.data?.artifacts?.classes}
+            />
+          </div>
+        )}
+        {tab === "projection" && activeRunId && <ProjectionPanel key={activeRunId} target={{ kind: "run", id: activeRunId }} />}
       </TabPanel>
 
       <Modal

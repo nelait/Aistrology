@@ -30,6 +30,19 @@ Next.js (App Router) + TypeScript (strict) + Tailwind CSS client for the Analyti
 | Admin | LLM health + circuit breaker, prompt templates (defaults, tenant overrides with provider variants, activate / deactivate), Slack / Teams destinations, OAuth clients (secret shown once, revoke), network policy (CIDR validation, lock-out warning), SCIM token, teams (members, project grants), consent (records, LLM consent requirement), costs (date range, breakdown + chart), public-link switch, incoming webhooks (secret once, curl / Python signing examples, in-browser signature tester) |
 | Settings | `/settings`: email notification preferences per event kind, your consents (record / withdraw) |
 
+### Phase 3 features
+
+| Area | What's there |
+|------|--------------|
+| Schedules | `/schedules`: list / create / edit / enable / delete / “Run now” for every job type from `GET /v1/schedules/types` (types the caller lacks the permission for are shown but disabled). Cron builder (hourly, daily, weekdays, days of the week, monthly) with presets and a raw-expression mode validated like the server (syntax, ranges, 5-minute minimum interval), IANA time-zone picker, “next 5 runs” from the API (`upcoming`) in the schedule's zone and local time. Parameter forms per type: saved analytic + parameter values + row limit, dashboard delivery with public-link option, drift check (endpoint, window), canary steps, stream compaction, dataset profiling, pipeline apply. Recipients are tenant users (admins pick from the directory; others add themselves or user ids) plus Slack / Teams destinations. Last status, error, job and the `last_result` snapshot (first rows of a scheduled analytic, or the delivered dashboard) |
+| Dashboards | Comments side panel: threads per dashboard and per widget (unresolved-thread badges on widget headers and the toolbar), `@` mention autocomplete (WAI-ARIA combobox) of tenant users, replies, resolve / reopen (author, owner / editors, admins), edit / delete your own; mentions render as names. Mention notifications appear in the bell |
+| Analytics | “Multiple datasets” mode (`/analytics/new?mode=multi`): pick up to 5 datasets with validated aliases, SQL across them (Monaco with alias / column completion), chart + results; “Suggest joins” shows join candidates with key-overlap bars and validated suggestion cards. Accept / reject on every suggestion card (dataset Suggestions tab and multi-dataset) sends feedback; learned preferences are shown to analysts and can be reset by admins (Admin → AI → Suggestion preferences) |
+| Datasets | “New stream” dataset; Stream tab with buffered rows / bytes, stored rows, last compaction, size-limit bar, “Compact now” (job progress), a curl example for `POST /v1/streams/{id}/records` and a “send test records” form; Projection tab (UMAP / t-SNE / PCA scatter, colour by a column, feature selection) |
+| Experiments | Anomaly detection (optional label column, contamination, threshold by contamination or best F1, anomaly label value; the detector suggests it for rare binary targets). Anomaly run charts: score distribution with the threshold (split by label when labelled), PR / ROC / confusion matrix when labelled, top anomalies, flagged-vs-normal feature shifts. TF-IDF text features (max terms, n-grams, SVD, columns) in preprocessing. Fairness tab for classification runs: protected attributes → per-group metrics table, demographic parity, equalized odds and the four-fifths rule with plain-language guidance (older runs explain the 409). Projection tab coloured by predictions or the actual target |
+| Models | “Upload ONNX model”: file drop (≤ 200 MB, pickle / joblib / zip refused client-side too), name, reference dataset, signature editor (problem type, classes, input layout, features with types / categories / ranges, CSV-header import, JSON mode, output names) with per-row validation; the API's `model_rejected` message is shown |
+| Endpoints | Canary tab: wizard (candidate version, traffic steps, minutes per step, error-rate / p95 / minimum-request guardrails), step progress, live canary-vs-baseline metrics, timeline, promote / abort, and a link to schedule “Canary steps”. Streaming tab: SSE “try it” rendering `start` / `prediction` / `forecast` / `done` / `error` events as they arrive, and a WebSocket console (`/stream-token`, then `ws(s)://…/ws?token=`). Anomaly endpoints show `is_anomaly` and `score` with the threshold |
+| API explorer | `/api-explorer`: GraphQL queries and the `predict` mutation against `POST /graphql` with example queries, variables and a curl snippet |
+
 ## Setup
 
 Requirements: Node.js 20+ (22 recommended) and the API running (see `../backend`).
@@ -72,7 +85,10 @@ Tests cover the API client's token refresh (single in-flight refresh for concurr
 another tab, session loss), the query-builder SQL generation (quoting, operators, parameters) and the
 pipeline step form serialization (every `op`, validation, round-trips, a rendered form), and the Phase 2 helpers: schema diff
 rendering, PSI status mapping, CIDR validation, inbound-hook signature examples (checked against Node's HMAC), iframe URL
-validation, the sandboxed custom HTML widget, distribution settings, connector forms and cost breakdowns.
+validation, the sandboxed custom HTML widget, distribution settings, connector forms and cost breakdowns. Phase 3 tests cover
+the cron helpers (validation, minimum interval, builder round-trips, descriptions), alias validation, the SSE parser (chunk
+boundaries, CRLF, multi-line data), the WebSocket URL, fairness four-fifths display logic, the ONNX signature editor
+serialization (and a rendered editor), mention autocomplete, schedule parameters, canary steps and projection colours.
 
 ## Docker
 

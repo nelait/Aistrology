@@ -15,8 +15,11 @@ import { TablesTab } from "@/components/dataset/TablesTab";
 import { AdvancedProfileTab } from "@/components/dataset/AdvancedProfileTab";
 import { AnnotationsTab } from "@/components/dataset/AnnotationsTab";
 import { IngestNotes } from "@/components/dataset/IngestNotes";
+import { StreamTab } from "@/components/dataset/StreamPanel";
+import { ProjectionPanel } from "@/components/ProjectionPanel";
+import { schemaColumns } from "@/lib/data";
 
-const TABS = ["schema", "tables", "profile", "advanced", "annotations", "data", "suggestions", "versions"] as const;
+const TABS = ["stream", "schema", "tables", "profile", "advanced", "projection", "annotations", "data", "suggestions", "versions"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function DatasetDetailPage() {
@@ -90,10 +93,12 @@ export default function DatasetDetailPage() {
             active={tab}
             onChange={setTab}
             tabs={[
+              { id: "stream", label: "Stream", hidden: d.source !== "stream" },
               { id: "schema", label: "Schema" },
               { id: "tables", label: d.tables.length > 1 ? `Tables (${d.tables.length})` : "Table" },
               { id: "profile", label: "Profile" },
               { id: "advanced", label: "Advanced profile" },
+              { id: "projection", label: "Projection", hidden: d.tables.length > 1 },
               { id: "annotations", label: "Annotations" },
               { id: "data", label: "Data (SQL)" },
               { id: "suggestions", label: "Suggestions", hidden: !can("analytics.create") },
@@ -101,6 +106,8 @@ export default function DatasetDetailPage() {
             ]}
           />
           <TabPanel id={tab}>
+            {tab === "stream" && d.source === "stream" && <StreamTab dataset={d} />}
+            {tab === "projection" && <ProjectionPanel target={{ kind: "dataset", id: d.id, version }} columns={schemaColumns(d.schema).map((c) => c.name)} />}
             {tab === "schema" && <SchemaTab dataset={d} />}
             {tab === "tables" && <TablesTab dataset={d} />}
             {tab === "profile" &&

@@ -6,6 +6,7 @@ import { api, type ChartSpec, type DatasetRecord, type Suggestion } from "@/lib/
 import { useToast } from "@/lib/toast";
 import { ChartView } from "../charts/ChartView";
 import { Badge, Button, Card, CodeBlock, EmptyState, Modal, Spinner, TextField } from "../ui";
+import { FeedbackButtons, type Verdict } from "../analytics/SuggestionFeedback";
 
 const CATEGORY_TONE = { descriptive: "neutral", diagnostic: "info", predictive: "good", prescriptive: "warning" } as const;
 
@@ -34,6 +35,7 @@ export function SuggestionsTab({ dataset }: { dataset: DatasetRecord }) {
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [rejected, setRejected] = useState<Set<string>>(new Set());
+  const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
   const [accepting, setAccepting] = useState<Suggestion | null>(null);
   const [name, setName] = useState("");
 
@@ -142,24 +144,24 @@ export function SuggestionsTab({ dataset }: { dataset: DatasetRecord }) {
                       <CodeBlock code={s.sql} label="Suggested SQL" />
                     </div>
                   </details>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={!s.valid}
-                      onClick={() => {
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <FeedbackButtons
+                      datasetId={dataset.id}
+                      suggestion={s}
+                      verdict={verdicts[key]}
+                      acceptDisabled={!s.valid}
+                      onVerdict={(v) => {
+                        setVerdicts((x) => ({ ...x, [key]: v }));
+                        if (v === "rejected") setTimeout(() => setRejected((r) => new Set(r).add(key)), 600);
+                      }}
+                      onAccept={() => {
                         setAccepting(s);
                         setName(s.title);
                       }}
-                    >
-                      Accept
-                    </Button>
+                    />
                     <Link href={analyticDraftHref(dataset.id, s, chart)} className="rounded-md border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-[var(--surface-2)]">
                       Modify
                     </Link>
-                    <Button size="sm" variant="ghost" onClick={() => setRejected((r) => new Set(r).add(key))}>
-                      Reject
-                    </Button>
                   </div>
                 </Card>
               );

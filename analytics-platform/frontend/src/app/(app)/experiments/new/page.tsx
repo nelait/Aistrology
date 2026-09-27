@@ -33,6 +33,12 @@ interface Form {
   ensemble: { mode: "auto" | "on" | "off"; methods: ("stacking" | "voting")[]; top_k: number };
   clustering: { k_min: number; k_max: number; max_fit_rows: number };
   forecast: ForecastConfig;
+  /** TRN-008: contamination as typed ("" = label rate / 0.05) */
+  anomaly: { contamination: string; threshold: "contamination" | "f1"; positive_label: string; max_fit_rows: number };
+  /** FE-006 */
+  text: { enabled: boolean; max_features: number; ngram_max: number; svd: string; columns: string[] };
+  /** XAI-004 PII-tagged columns to keep for fairness analysis */
+  fairnessProtected: string[];
 }
 
 const DEFAULT: Form = {
@@ -55,9 +61,18 @@ const DEFAULT: Form = {
   ensemble: { mode: "auto", methods: ["stacking", "voting"], top_k: 3 },
   clustering: { k_min: 2, k_max: 8, max_fit_rows: 5000 },
   forecast: { time_column: "", frequency: "", horizon: 12, season_length: null, backtest_folds: 3, interval_level: 0.9, aggregation: "mean" },
+  anomaly: { contamination: "", threshold: "contamination", positive_label: "", max_fit_rows: 5000 },
+  text: { enabled: false, max_features: 200, ngram_max: 1, svd: "", columns: [] },
+  fairnessProtected: [],
 };
 
 type FsMethod = NonNullable<Preprocessing["feature_selection"]>["method"];
+
+function contaminationError(v: string): string | null {
+  if (!v) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 && n <= 0.5 ? null : "Between 0 (exclusive) and 0.5";
+}
 
 const SUPERVISED = new Set(["binary", "multiclass", "regression"]);
 
@@ -65,8 +80,10 @@ const SUPERVISED = new Set(["binary", "multiclass", "regression"]);
 function buildConfig(form: Form, hp: Record<string, Record<string, JsonValue>>, problem: ProblemType | undefined, includeTarget = true): TrainingConfig {
   const clustering = problem === "clustering";
   const forecasting = problem === "forecasting";
-  const supervised = !clustering && !forecasting;
+  const anomaly = problem === "anomaly";
+  const supervised = !clustering && !forecasting && !anomaly;
   const isClassification = problem === "binary" || problem === "multiclass";
+  const contamination = Number(form.anomaly.contamination);
   return {
     ...(includeTarget && !clustering && form.target ? { target: form.target } : {}),
     ...(includeTarget && form.features.length && !forecasting ? { features: form.features } : {}),
@@ -85,6 +102,16 @@ function buildConfig(form: Form, hp: Record<string, Record<string, JsonValue>>, 
       feature_selection: form.fsEnabled && supervised ? form.preprocessing.feature_selection : undefined,
       auto_features: form.autoFeatures.enabled && !forecasting ? { interactions: form.autoFeatures.interactions, polynomial: form.autoFeatures.polynomial, top_k: form.autoFeatures.top_k } : undefined,
       pca: form.pca.enabled && !forecasting ? { n_components: form.pca.n_components } : undefined,
+      text:
+        form.text.enabled && !forecasting
+          ? {
+              method: "tfidf",
+              max_features: form.text.max_features,
+              ngram_max: form.text.ngram_max,
+              svd_components: form.text.svd ? Number(form.text.svd) : null,
+              columns: form.text.columns.length ? form.text.columns : null,
+            }
+          : undefined,
     },
     class_imbalance: isClassification ? form.class_imbalance : "none",
     max_training_seconds: form.max_training_seconds,
@@ -92,6 +119,17 @@ function buildConfig(form: Form, hp: Record<string, Record<string, JsonValue>>, 
     ...(supervised ? { ensemble: { enabled: form.ensemble.mode === "auto" ? null : form.ensemble.mode === "on", methods: form.ensemble.methods, top_k: form.ensemble.top_k } } : {}),
     ...(clustering ? { clustering: form.clustering } : {}),
     ...(forecasting ? { forecast: { ...form.forecast, frequency: form.forecast.frequency || null, season_length: form.forecast.season_length || null } } : {}),
+    ...(anomaly
+      ? {
+          anomaly: {
+            contamination: form.anomaly.contamination && Number.isFinite(contamination) ? contamination : null,
+            threshold: form.target ? form.anomaly.threshold : "contamination",
+            positive_label: form.target && form.anomaly.positive_label ? form.anomaly.positive_label : null,
+            max_fit_rows: form.anomaly.max_fit_rows,
+          },
+        }
+      : {}),
+    ...(isClassification && form.fairnessProtected.length ? { fairness: { protected: form.fairnessProtected } } : {}),
   };
 }
 
@@ -118,6 +156,24 @@ function formFromConfig(form: Form, c: TrainingConfig, columns: string[]): { for
       ensemble: c.ensemble ? { mode: c.ensemble.enabled === null ? "auto" : c.ensemble.enabled ? "on" : "off", methods: c.ensemble.methods, top_k: c.ensemble.top_k } : DEFAULT.ensemble,
       clustering: { ...DEFAULT.clustering, ...c.clustering },
       forecast: { ...DEFAULT.forecast, ...c.forecast, frequency: c.forecast?.frequency ?? "" },
+      anomaly: c.anomaly
+        ? {
+            contamination: c.anomaly.contamination !== null && c.anomaly.contamination !== undefined ? String(c.anomaly.contamination) : "",
+            threshold: c.anomaly.threshold ?? "contamination",
+            positive_label: c.anomaly.positive_label ?? "",
+            max_fit_rows: c.anomaly.max_fit_rows ?? 5000,
+          }
+        : DEFAULT.anomaly,
+      text: pre?.text
+        ? {
+            enabled: true,
+            max_features: pre.text.max_features ?? 200,
+            ngram_max: pre.text.ngram_max ?? 1,
+            svd: pre.text.svd_components ? String(pre.text.svd_components) : "",
+            columns: (pre.text.columns ?? []).filter((x) => columns.includes(x)),
+          }
+        : DEFAULT.text,
+      fairnessProtected: (c.fairness?.protected ?? []).filter((x) => columns.includes(x)),
     },
     hp: (c.hyperparameters as Record<string, Record<string, JsonValue>>) ?? {},
   };
@@ -149,10 +205,11 @@ function NewExperiment() {
   const profile = useQuery({ queryKey: ["profile", form.dataset_id, dataset?.version], queryFn: () => api.datasets.profile(form.dataset_id), enabled: !!dataset && dataset.tables.length <= 1, meta: { silent: true } });
 
   const wantsClustering = form.problem_type === "clustering";
+  const wantsAnomaly = form.problem_type === "anomaly";
   const detect = useQuery({
     queryKey: ["detect", form.dataset_id, form.target],
     queryFn: () => api.training.detect(form.dataset_id, form.target),
-    enabled: !!form.dataset_id && !!form.target && !wantsClustering,
+    enabled: !!form.dataset_id && !!form.target && !wantsClustering && !wantsAnomaly,
   });
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -163,16 +220,23 @@ function NewExperiment() {
 
   useEffect(() => {
     if (form.target) setForm((f) => ({ ...f, features: columns.map((c) => c.name).filter((c) => c !== f.target) }));
-    else if (form.problem_type === "clustering") setForm((f) => ({ ...f, features: columns.map((c) => c.name) }));
+    else if (form.problem_type === "clustering" || form.problem_type === "anomaly") setForm((f) => ({ ...f, features: columns.map((c) => c.name) }));
   }, [form.target, form.problem_type, columns]);
 
   const problem: ProblemType | undefined = (form.problem_type || (wantsClustering ? "clustering" : detect.data?.problem_type)) as ProblemType | undefined;
   const clustering = problem === "clustering";
   const forecasting = problem === "forecasting";
+  const anomaly = problem === "anomaly";
   const supervised = !!problem && SUPERVISED.has(problem);
   const isClassification = problem === "binary" || problem === "multiclass";
   const available = (algorithms.data ?? []).filter((a) => !problem || a.problem_types.includes(problem)).filter((a) => !a.id.endsWith("_ensemble"));
   const forecastAlt = detect.data?.alternatives?.find((a) => a.problem_type === "forecasting");
+  const anomalyAlt = detect.data?.alternatives?.find((a) => a.problem_type === "anomaly" && a.label_column);
+  const piiColumns = useMemo(() => {
+    const fields = dataset?.schema?.entities?.[0]?.fields ?? [];
+    return fields.filter((f) => f.pii || f.annotations?.includes("pii") || f.annotations?.includes("sensitive")).map((f) => f.name);
+  }, [dataset]);
+  const textCandidates = columns.filter((c) => c.type === "string" && !/(^id$|_id$)/i.test(c.name)).map((c) => c.name);
 
   const leakage = useMemo(() => {
     const row = profile.data?.correlations?.[form.target];
@@ -190,7 +254,12 @@ function NewExperiment() {
 
   const num = (v: string, fallback: number) => (v === "" || !Number.isFinite(Number(v)) ? fallback : Number(v));
   const ready =
-    !!form.dataset_id && !!form.name.trim() && (clustering ? form.features.length > 0 || columns.length > 0 : !!form.target) && (!forecasting || !!form.forecast.time_column) && (forecasting || clustering || form.features.length > 0);
+    !!form.dataset_id &&
+    !!form.name.trim() &&
+    (clustering || anomaly ? form.features.length > 0 || columns.length > 0 : !!form.target) &&
+    (!forecasting || !!form.forecast.time_column) &&
+    (forecasting || clustering || form.features.length > 0) &&
+    (!anomaly || !contaminationError(form.anomaly.contamination));
 
   return (
     <div className="space-y-5">
@@ -204,7 +273,7 @@ function NewExperiment() {
           </>
         }
         title="New experiment"
-        description="Train and compare models with AutoML: classification, regression, clustering and forecasting. Every run is tracked with its parameters, metrics and dataset version."
+        description="Train and compare models with AutoML: classification, regression, clustering, forecasting and anomaly detection. Every run is tracked with its parameters, metrics and dataset version."
         actions={
           <Button onClick={() => setSaveOpen(true)} disabled={!problem}>
             Save as template
@@ -246,7 +315,7 @@ function NewExperiment() {
               value={form.problem_type}
               onChange={(e) => {
                 const v = e.target.value as ProblemType | "";
-                setForm((f) => ({ ...f, problem_type: v, algorithms: [], target: v === "clustering" ? "" : f.target }));
+                setForm((f) => ({ ...f, problem_type: v, algorithms: [], target: v === "clustering" ? "" : f.target, features: v === "anomaly" && !f.target ? columns.map((c) => c.name) : f.features }));
               }}
               options={[
                 { value: "binary", label: "Binary classification" },
@@ -254,10 +323,22 @@ function NewExperiment() {
                 { value: "regression", label: "Regression" },
                 { value: "clustering", label: "Clustering (no target)" },
                 { value: "forecasting", label: "Time-series forecasting" },
+                { value: "anomaly", label: "Anomaly detection (optional labels)" },
               ]}
               placeholder="Auto-detect from the target"
             />
-            {!wantsClustering && (
+            {wantsAnomaly && (
+              <SelectField
+                label="Label column (optional)"
+                value={form.target}
+                onChange={(e) => set("target", e.target.value)}
+                options={columns.map((c) => ({ value: c.name, label: `${c.name} (${c.type})` }))}
+                placeholder="No labels (unsupervised)"
+                disabled={!dataset}
+                hint="Used only to evaluate (precision, recall, PR/ROC), never as a feature."
+              />
+            )}
+            {!wantsClustering && !wantsAnomaly && (
               <SelectField
                 label="Target column"
                 required
@@ -306,10 +387,31 @@ function NewExperiment() {
               </Button>
             </p>
           )}
-          {(form.target || clustering) && !forecasting && (
+          {anomalyAlt && form.problem_type !== "anomaly" && (
+            <p className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-brand-50 p-2 text-sm dark:bg-brand-900/40">
+              <span>
+                {anomalyAlt.reason ?? "The positive class is rare."} Anomaly detection can flag rare cases without relying on many labelled examples.
+              </span>
+              <Button
+                size="sm"
+                onClick={() =>
+                  setForm((f) => ({
+                    ...f,
+                    problem_type: "anomaly",
+                    algorithms: [],
+                    target: anomalyAlt.label_column ?? f.target,
+                    anomaly: { ...f.anomaly, positive_label: anomalyAlt.positive_label !== undefined && anomalyAlt.positive_label !== null ? String(anomalyAlt.positive_label) : f.anomaly.positive_label },
+                  }))
+                }
+              >
+                Detect anomalies instead
+              </Button>
+            </p>
+          )}
+          {(form.target || clustering || anomaly) && !forecasting && (
             <div className="mt-4">
               <MultiSelect
-                label={clustering ? "Features to cluster on" : "Features"}
+                label={clustering ? "Features to cluster on" : anomaly ? "Features to score" : "Features"}
                 options={toOptions(columns.map((c) => c.name).filter((c) => c !== form.target))}
                 value={form.features}
                 onChange={(v) => set("features", v)}
@@ -380,6 +482,49 @@ function NewExperiment() {
               <TextField label="Max rows to fit" type="number" min={100} max={100000} value={form.clustering.max_fit_rows} onChange={(e) => set("clustering", { ...form.clustering, max_fit_rows: num(e.target.value, 5000) })} />
             </div>
             <p className="mt-2 text-xs text-[var(--text-2)]">AutoML searches the number of clusters in this range and ranks runs by silhouette score. DBSCAN finds k itself and may label noise (cluster −1).</p>
+          </Card>
+        )}
+
+        {anomaly && (
+          <Card title="Anomaly detection">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <TextField
+                label="Contamination"
+                type="number"
+                min={0.001}
+                max={0.5}
+                step="any"
+                value={form.anomaly.contamination}
+                placeholder={form.target ? "label rate" : "0.05"}
+                onChange={(e) => set("anomaly", { ...form.anomaly, contamination: e.target.value })}
+                hint="Expected share of anomalies (0–0.5]; sets the threshold"
+                error={contaminationError(form.anomaly.contamination)}
+              />
+              <SelectField
+                label="Threshold"
+                value={form.target ? form.anomaly.threshold : "contamination"}
+                disabled={!form.target}
+                onChange={(e) => set("anomaly", { ...form.anomaly, threshold: e.target.value as Form["anomaly"]["threshold"] })}
+                options={[
+                  { value: "contamination", label: "From contamination (score quantile)" },
+                  { value: "f1", label: "Best F1 on the labels" },
+                ]}
+                hint={form.target ? undefined : "F1 needs a label column"}
+              />
+              {form.target && (
+                <TextField
+                  label="Anomaly label value"
+                  value={form.anomaly.positive_label}
+                  placeholder="auto (1 / true / fraud / minority)"
+                  onChange={(e) => set("anomaly", { ...form.anomaly, positive_label: e.target.value })}
+                />
+              )}
+              <TextField label="Max rows to fit" type="number" min={100} max={100000} value={form.anomaly.max_fit_rows} onChange={(e) => set("anomaly", { ...form.anomaly, max_fit_rows: num(e.target.value, 5000) })} />
+            </div>
+            <p className="mt-2 text-xs text-[var(--text-2)]">
+              Isolation Forest, One-Class SVM, LOF and an autoencoder all score rows so that higher = more anomalous.{" "}
+              {form.target ? "With labels, runs are ranked by PR-AUC on held-out rows." : "Without labels, runs are ranked by agreement with the consensus of all detectors, and AutoML doesn't tune hyperparameters."}
+            </p>
           </Card>
         )}
 
@@ -573,6 +718,58 @@ function NewExperiment() {
                     />
                   )}
                 </>
+              )}
+              {!forecasting && (
+                <>
+                  <Checkbox
+                    className="sm:col-span-3"
+                    label="Text features (TF-IDF)"
+                    hint="Use free-text columns (otherwise dropped) as TF-IDF features inside the served model. Not ONNX-exportable."
+                    checked={form.text.enabled}
+                    onChange={(e) => set("text", { ...form.text, enabled: e.target.checked })}
+                  />
+                  {form.text.enabled && (
+                    <>
+                      <TextField label="Max terms" type="number" min={2} max={5000} value={form.text.max_features} onChange={(e) => set("text", { ...form.text, max_features: num(e.target.value, 200) })} />
+                      <SelectField
+                        label="N-grams"
+                        value={String(form.text.ngram_max)}
+                        onChange={(e) => set("text", { ...form.text, ngram_max: Number(e.target.value) })}
+                        options={[
+                          { value: "1", label: "Words" },
+                          { value: "2", label: "Words + pairs" },
+                          { value: "3", label: "Up to 3-word phrases" },
+                        ]}
+                      />
+                      <TextField label="SVD components" type="number" min={1} max={500} value={form.text.svd} placeholder="off" onChange={(e) => set("text", { ...form.text, svd: e.target.value })} hint="Compress terms (optional)" />
+                      <div className="sm:col-span-3">
+                        <MultiSelect
+                          label="Text columns (empty = detect)"
+                          options={toOptions(textCandidates)}
+                          value={form.text.columns}
+                          onChange={(v) => set("text", { ...form.text, columns: v })}
+                          maxHeight={120}
+                          hint="By default, TEXT schema columns and multi-word string columns are used; ids stay dropped."
+                        />
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+              {isClassification && !piiColumns.length && (
+                <p className="text-xs text-[var(--text-2)] sm:col-span-3">Fairness analysis: numeric and low-cardinality columns are kept with the held-out predictions automatically (no PII-tagged columns in this dataset).</p>
+              )}
+              {isClassification && piiColumns.length > 0 && (
+                <div className="sm:col-span-3">
+                  <MultiSelect
+                    label="Keep PII columns for fairness analysis"
+                    options={toOptions(piiColumns)}
+                    value={form.fairnessProtected}
+                    onChange={(v) => set("fairnessProtected", v)}
+                    maxHeight={120}
+                    hint="Numeric and low-cardinality columns are kept automatically with the held-out predictions; PII-tagged columns only when listed here."
+                  />
+                </div>
               )}
               {isClassification && (
                 <SelectField
