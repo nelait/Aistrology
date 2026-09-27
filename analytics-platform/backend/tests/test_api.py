@@ -9,12 +9,11 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.deps import AppState
+from app.api.deps import AppState, build_state
 from app.llm.base import LLMRequest
 from app.llm.providers.mock import MockProvider
 from app.llm.router import LLMRouter
 from app.main import create_app
-from app.storage.datasets import DatasetStore
 
 from .conftest import CUSTOMER_ORDERS_SCHEMA
 
@@ -28,7 +27,7 @@ SALES_CSV = "Order ID,Region,Order Date,Amount,Customer Email\n" + "\n".join(
 
 @pytest.fixture
 def state(tmp_path) -> AppState:
-    return AppState(store=DatasetStore(tmp_path, max_dataset_bytes=200_000))
+    return build_state(data_dir=tmp_path, dev_auth=True, cloud_provider="local", database_url=None, max_dataset_bytes=200_000)
 
 
 @pytest.fixture
@@ -40,10 +39,10 @@ def upload(client: TestClient, content: str = SALES_CSV, name: str = "sales.csv"
     return client.post("/v1/datasets", files={"file": (name, content.encode(), "text/csv")}, headers=headers)
 
 
-def test_auth_stub_is_off_by_default(client, monkeypatch):
-    monkeypatch.delenv("AP_DEV_AUTH")
+def test_auth_stub_is_off_by_default(tmp_path):
+    client = TestClient(create_app(build_state(data_dir=tmp_path, dev_auth=False, cloud_provider="local", database_url=None)))
     assert client.get("/v1/datasets", headers=ACME).status_code == 401
-    assert client.get("/healthz").json() == {"status": "ok"}
+    assert client.get("/healthz").json() == {"status": "ok", "cloud": "local"}
 
 
 def test_invalid_tenant_rejected(client):
@@ -158,7 +157,7 @@ def test_upload_limits_and_checksum(client, state):
     )
     assert r.status_code == 201
     assert upload(client, "", "empty.csv").status_code == 422
-    assert list(state.store.root.rglob(".upload-*")) == []  # temp files cleaned up
+    assert list(state.store.cache_dir.rglob(".upload-*")) == []  # temp files cleaned up
 
 
 def test_confirm_schema_renames_columns(client):

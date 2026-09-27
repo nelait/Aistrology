@@ -15,10 +15,25 @@ dependencies = [
     "openpyxl>=3.1",
     "httpx>=0.27",
     "anthropic>=1.0",
+    "email-validator>=2.1",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "pyjwt>=2.7",
+    "argon2-cffi>=23.1",
+    "pyotp>=2.9",
+    "cryptography>=41",
+    "scikit-learn>=1.5",
+    "xgboost>=2.0",
+    "lightgbm>=4.3",
+    "optuna>=3.6",
+    "shap>=0.45",
+    "skops>=0.10",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6"]
+gcp = ["google-cloud-storage>=2.16", "google-cloud-secret-manager>=2.20", "google-cloud-kms>=2.21", "google-cloud-pubsub>=2.21"]
+aws = ["boto3>=1.34"]
+dev = ["pytest>=8", "ruff>=0.6", "moto[s3,secretsmanager,kms,sqs]>=5.0", "boto3>=1.34", "google-cloud-storage>=2.16", "google-cloud-secret-manager>=2.20", "google-cloud-kms>=2.21", "google-cloud-pubsub>=2.21"]
 
 [build-system]
 requires = ["setuptools>=68"]

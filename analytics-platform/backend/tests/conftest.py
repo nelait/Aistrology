@@ -50,5 +50,7 @@ def shop_schema():
 
 
 @pytest.fixture(autouse=True)
-def _dev_auth(monkeypatch):
-    monkeypatch.setenv("AP_DEV_AUTH", "1")
+def _isolated_env(monkeypatch, tmp_path):
+    for var in ("AP_CLOUD_PROVIDER", "AP_DATABASE_URL", "AP_DEV_AUTH"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("AP_DATA_DIR", str(tmp_path / "default-data"))

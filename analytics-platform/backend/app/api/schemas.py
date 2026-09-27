@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from ..auth.rbac import Permission
+from ..auth.service import Principal
 from ..config import settings
 from ..generation.export import ExportFormat, export_frame, export_zip, to_records
 from ..generation.generator import GenerationError, GenerationOptions, GenerationTooLarge, check_size, generate, plan_counts, preview
@@ -17,7 +19,7 @@ from ..schema.json_schema import parse_json_schema
 from ..schema.model import Issue, Schema, SchemaValidationError, to_json_schema, validate_schema
 from ..schema.natural_language import parse_natural_language
 from ..schema.xsd import parse_xsd
-from .deps import AppState, Principal, PrincipalDep, StateDep
+from .deps import AppState, StateDep, require
 
 router = APIRouter(prefix="/v1", tags=["schemas"])
 
@@ -58,7 +60,9 @@ def _issues_http(exc: SchemaValidationError) -> HTTPException:
 
 
 @router.post("/schemas/parse", response_model=ParseResponse)
-async def parse_schema(body: ParseRequest, state: AppState = StateDep, principal: Principal = PrincipalDep) -> ParseResponse:
+async def parse_schema(
+    body: ParseRequest, state: AppState = StateDep, principal: Principal = require(Permission.EDIT_PIPELINES)
+) -> ParseResponse:
     try:
         if body.format == SchemaFormat.JSON_SCHEMA:
             schema, warnings = parse_json_schema(body.content)
@@ -79,13 +83,13 @@ async def parse_schema(body: ParseRequest, state: AppState = StateDep, principal
 
 
 @router.post("/schemas/validate")
-async def validate(schema: Schema, principal: Principal = PrincipalDep) -> dict[str, Any]:
+async def validate(schema: Schema, principal: Principal = require(Permission.READ_DATA)) -> dict[str, Any]:
     issues = validate_schema(schema)
     return {"valid": not any(i.severity == "error" for i in issues), "issues": [i.model_dump() for i in issues]}
 
 
 @router.post("/generate/preview")
-async def generate_preview(body: GenerateRequest, principal: Principal = PrincipalDep) -> dict[str, Any]:
+async def generate_preview(body: GenerateRequest, principal: Principal = require(Permission.WRITE_DATA)) -> dict[str, Any]:
     try:
         frames = preview(body.schema_, body.options)
     except SchemaValidationError as exc:
@@ -99,7 +103,7 @@ async def generate_preview(body: GenerateRequest, principal: Principal = Princip
 
 
 @router.post("/generate")
-async def generate_data(body: GenerateRequest, state: AppState = StateDep, principal: Principal = PrincipalDep):
+async def generate_data(body: GenerateRequest, state: AppState = StateDep, principal: Principal = require(Permission.WRITE_DATA)):
     try:
         planned = plan_counts(body.schema_, body.options)
         if sum(planned.values()) > settings.sync_generation_row_limit:
