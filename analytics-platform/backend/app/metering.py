@@ -61,6 +61,10 @@ class DbUsageLedger(UsageLedger):
         m.add(tenant_id, "llm.requests", key)
         m.add(tenant_id, "llm.tokens.input", key, response.usage.input_tokens)
         m.add(tenant_id, "llm.tokens.output", key, response.usage.output_tokens)
+        from .observability import LLM_TOKENS
+
+        LLM_TOKENS.labels(response.provider, "input").inc(response.usage.input_tokens)
+        LLM_TOKENS.labels(response.provider, "output").inc(response.usage.output_tokens)
         if price is None:
             m.add(tenant_id, "llm.unpriced_requests", key)
         else:

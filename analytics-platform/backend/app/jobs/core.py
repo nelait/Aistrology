@@ -220,6 +220,8 @@ class Worker:
             if status != "queued":
                 job.finished_at = datetime.now(UTC)
         self.state.metering.add(tenant_id, "compute.seconds", job_type, elapsed)
+        if (counter := self.state.extras.get("job_metrics")) is not None:
+            counter.labels(job_type, status).inc()
         if status in ("succeeded", "failed"):
             self.state.audit.record(tenant_id, "system", f"job.{status}", job_id=job_id, type=job_type, seconds=round(elapsed, 3))
         # Webhook deliveries never notify: a failing delivery would otherwise emit job.failed → another delivery → …

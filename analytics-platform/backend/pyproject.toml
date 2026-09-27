@@ -29,6 +29,10 @@ dependencies = [
     "shap>=0.45",
     "skops>=0.10",
     "defusedxml>=0.7",
+    "prometheus-client>=0.20",
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-instrumentation-fastapi>=0.46b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
 ]
 
 [project.optional-dependencies]
