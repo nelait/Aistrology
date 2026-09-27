@@ -16,7 +16,7 @@ import re
 import shutil
 import tempfile
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -31,12 +31,13 @@ from ..cloud.crypto import EncryptedObjectStore
 from ..config import settings
 from ..db.models import Dataset, DatasetVersion
 from ..db.session import Database
-from ..ingestion.formats import DataFormat, UnsupportedFormatError, detect_encoding, detect_format, is_xlsx
+from ..ingestion.archive import ArchiveTooLarge
+from ..ingestion.formats import DataFormat
+from ..ingestion.prepare import PreparedUpload, prepare_upload
 from ..schema.model import Schema
 
 TENANT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,62}$")
 DATASET_ID_RE = re.compile(r"^ds_[0-9a-f]{32}$")
-HEAD_BYTES = 64 * 1024
 
 
 class DatasetTooLarge(ValueError):
@@ -68,6 +69,11 @@ class TableRecord(BaseModel):
     sha256: str  # of the plaintext
     original_filename: str | None = None
     row_count: int | None = None
+    # ING-003a / ING-006 / CLN-009: set when the stored table was converted, extracted or transcoded.
+    source_format: DataFormat | None = None
+    source_encoding: str | None = None
+    raw_file: str | None = None  # object key of the untouched upload (archive or original file)
+    notes: list[str] = Field(default_factory=list)
 
 
 class DatasetRecord(BaseModel):
@@ -94,10 +100,17 @@ def _safe_filename(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", base)[:120]
 
 
-def _table_name(filename: str) -> str:
-    stem = Path(filename).stem.lower()
-    stem = re.sub(r"[^a-z0-9_]", "_", stem).strip("_") or "data"
-    return f"t_{stem}" if stem[0].isdigit() else stem
+def _dataset_name(safe_filename: str) -> str:
+    name = re.sub(r"(\.(gz|gzip|tgz|zip|tar))+$", "", safe_filename, flags=re.IGNORECASE)
+    return Path(name).stem or name or "dataset"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        while chunk := fh.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _check_tenant(tenant_id: str) -> None:
@@ -238,15 +251,19 @@ class DatasetStore:
         expected_sha256: str | None = None,
         name: str | None = None,
         project_id: str | None = None,
+        dataset_id: str | None = None,
+        transform: Callable[[PreparedUpload], PreparedUpload] | None = None,
     ) -> DatasetRecord:
-        """Stream an upload to scratch disk, enforcing the size limit before and during the transfer (ING-NFR-004)."""
+        """Stream an upload to scratch disk, enforcing the size limit before and during the transfer (ING-NFR-004).
+
+        With ``dataset_id`` the file becomes the next version of that dataset (INF-007).
+        """
         _check_tenant(tenant_id)
         if declared_size is not None and declared_size > self.max_dataset_bytes:
             raise DatasetTooLarge(self.max_dataset_bytes)
         self._check_quota(tenant_id, declared_size or 0)
         digest = hashlib.sha256()
         size = 0
-        head = b""
         fd, tmp_name = tempfile.mkstemp(dir=self._scratch(tenant_id), prefix=".upload-")
         tmp = Path(tmp_name)
         try:
@@ -255,8 +272,6 @@ class DatasetStore:
                     size += len(chunk)
                     if size > self.max_dataset_bytes:
                         raise DatasetTooLarge(self.max_dataset_bytes)
-                    if len(head) < HEAD_BYTES:
-                        head += chunk[: HEAD_BYTES - len(head)]
                     digest.update(chunk)
                     out.write(chunk)
             sha = digest.hexdigest()
@@ -264,37 +279,116 @@ class DatasetStore:
                 raise ValueError("checksum mismatch: the file was corrupted in transit")
             if size == 0:
                 raise ValueError("file is empty")
-            fmt = detect_format(filename, head)
-            if fmt == DataFormat.XLSX and not is_xlsx(tmp):
-                raise UnsupportedFormatError("file is not a valid .xlsx workbook")
-            encoding = detect_encoding(head) if fmt in (DataFormat.CSV, DataFormat.TSV, DataFormat.JSON, DataFormat.JSONL) else "binary"
-            self._check_quota(tenant_id, size)
-            safe = _safe_filename(filename)
-            dataset_id = f"ds_{uuid.uuid4().hex}"
-            key = f"datasets/{dataset_id}/v1/raw/{safe}"
-            table = TableRecord(
-                name=_table_name(safe),
-                file=key,
-                format=fmt,
-                encoding=encoding,
-                size_bytes=size,
+            return self.ingest_file(
+                tenant_id,
+                actor,
+                filename,
+                tmp,
                 sha256=sha,
-                original_filename=filename,
+                name=name,
+                project_id=project_id,
+                dataset_id=dataset_id,
+                transform=transform,
             )
-            self._store_file(tenant_id, key, tmp)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def ingest_file(
+        self,
+        tenant_id: str,
+        actor: str,
+        filename: str,
+        path: Path,
+        *,
+        sha256: str | None = None,
+        name: str | None = None,
+        project_id: str | None = None,
+        source: str = "upload",
+        dataset_id: str | None = None,
+        transform: Callable[[PreparedUpload], PreparedUpload] | None = None,
+    ) -> DatasetRecord:
+        """Store a local file as a new dataset (or the next version of ``dataset_id``).
+
+        Archives are extracted (one table per data file), P1 formats converted to Parquet
+        and non-UTF-8 text transcoded (ING-003a, ING-006, CLN-009). The untouched file is
+        always kept: as the table itself when nothing had to change, otherwise as ``raw_file``.
+        ``transform`` may rewrite the prepared tables before they are stored (schema evolution).
+        The file at ``path`` may be moved or deleted.
+        """
+        _check_tenant(tenant_id)
+        size = path.stat().st_size
+        if size > self.max_dataset_bytes:
+            raise DatasetTooLarge(self.max_dataset_bytes)
+        if size == 0:
+            raise ValueError("file is empty")
+        sha = sha256 or _sha256_file(path)
+        work = self._scratch(tenant_id) / f"prep-{uuid.uuid4().hex}"
+        try:
+            try:
+                prepared = prepare_upload(path, filename, work, max_bytes=self.max_dataset_bytes)
+            except ArchiveTooLarge as exc:
+                raise DatasetTooLarge(self.max_dataset_bytes) from exc
+            if transform is not None:
+                prepared = transform(prepared)
+            parent: int | None = None
+            if dataset_id is not None:
+                current = self.get(tenant_id, dataset_id)
+                parent, version, name, project_id = current.latest_version, current.latest_version + 1, current.name, current.project_id
+            else:
+                dataset_id, version = f"ds_{uuid.uuid4().hex}", 1
+            safe = _safe_filename(filename)
+            prefix = f"datasets/{dataset_id}/v{version}"
+            raw_key = f"{prefix}/raw/{safe}"
+            passthrough = prepared.passthrough and prepared.tables[0].path == path
+            tables: list[TableRecord] = []
+            staged: list[tuple[str, Path]] = []
+            for t in prepared.tables:
+                if passthrough:
+                    key, table_sha, table_size = raw_key, sha, size
+                else:
+                    ext = {DataFormat.PARQUET: ".parquet", DataFormat.XLSX: ".xlsx"}.get(t.format, f".{t.format.value}")
+                    key = f"{prefix}/tables/{t.name}{ext}"
+                    table_sha, table_size = _sha256_file(t.path), t.path.stat().st_size
+                tables.append(
+                    TableRecord(
+                        name=t.name,
+                        file=key,
+                        format=t.format,
+                        encoding=t.encoding,
+                        size_bytes=table_size,
+                        sha256=table_sha,
+                        original_filename=t.original_filename if prepared.archive else filename,
+                        row_count=t.row_count,
+                        source_format=t.source_format,
+                        source_encoding=t.source_encoding,
+                        raw_file=None if passthrough else raw_key,
+                        notes=t.notes,
+                    )
+                )
+                staged.append((key, t.path))
+            total = sum(t.size_bytes for t in tables)
+            if total > self.max_dataset_bytes:
+                raise DatasetTooLarge(self.max_dataset_bytes)
+            self._check_quota(tenant_id, total + (0 if passthrough else size))
+            if not passthrough:
+                # ING-010: the original upload is kept immutably next to the derived tables.
+                self.objects.put_file(tenant_id, raw_key, path, self._scratch(tenant_id) / f"enc-{uuid.uuid4().hex}")
+            for key, local in staged:
+                self._store_file(tenant_id, key, local)
             return self._insert(
                 tenant_id,
                 actor,
                 dataset_id=dataset_id,
-                name=name or Path(safe).stem,
-                source="upload",
-                tables=[table],
+                name=name or _dataset_name(safe),
+                source=source,
+                tables=tables,
                 schema=None,
-                version=1,
+                version=version,
+                parent_version=parent,
                 project_id=project_id,
             )
         finally:
-            tmp.unlink(missing_ok=True)
+            shutil.rmtree(work, ignore_errors=True)
 
     def save_frames(
         self,

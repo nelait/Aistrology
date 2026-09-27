@@ -76,6 +76,16 @@ class ColumnRole(str, Enum):
     BOOLEAN = "boolean"
 
 
+class ColumnAnnotation(str, Enum):
+    """User-supplied column annotations (ANA-010). ``pii`` and ``sensitive`` also set ``Field.pii`` (masked for the LLM)."""
+
+    PII = "pii"
+    SENSITIVE = "sensitive"
+    DERIVED = "derived"
+    TARGET = "target"
+    ID = "id"
+
+
 class ForeignKey(BaseModel):
     entity: str
     field: str
@@ -101,13 +111,15 @@ class Field(BaseModel):
     description: str | None = None
     # Original column name in an uploaded file, when it differed from ``name`` (INF-001).
     source_name: str | None = None
+    # ANA-010: column annotations confirmed by a user.
+    annotations: list[ColumnAnnotation] = PField(default_factory=list)
 
     @model_validator(mode="after")
     def _normalize(self) -> Field:
         if self.primary_key:
             self.nullable = False
             self.unique = True
-        if self.semantic in PII_SEMANTICS:
+        if self.semantic in PII_SEMANTICS or ColumnAnnotation.PII in self.annotations or ColumnAnnotation.SENSITIVE in self.annotations:
             self.pii = True
         return self
 
@@ -298,6 +310,8 @@ def to_json_schema(schema: Schema) -> dict[str, Any]:
             out["x-unique"] = True
         if f.references:
             out["x-foreign-key"] = f"{f.references.entity}.{f.references.field}"
+        if f.annotations:
+            out["x-annotations"] = [a.value for a in f.annotations]
         return out
 
     defs = {

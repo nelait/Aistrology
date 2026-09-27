@@ -1,4 +1,8 @@
-"""File format and encoding detection, and loading through DuckDB (ING-003, ING-009, ING-NFR-002)."""
+"""File format and encoding detection, and loading through DuckDB (ING-003, ING-003a, ING-009, ING-NFR-002).
+
+The P1 formats (.xls, Avro, ORC, XML) are detected here and converted to Parquet at ingest
+(``app.ingestion.converters``), so the loaders below only ever see the P0 formats.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +24,11 @@ class DataFormat(str, Enum):
     JSONL = "jsonl"
     PARQUET = "parquet"
     XLSX = "xlsx"
+    # ING-003a: converted to Parquet on ingest; the raw file keeps its original format.
+    XLS = "xls"
+    AVRO = "avro"
+    ORC = "orc"
+    XML = "xml"
 
 
 class UnsupportedFormatError(ValueError):
@@ -36,8 +45,14 @@ _EXTENSIONS = {
     ".parquet": DataFormat.PARQUET,
     ".pq": DataFormat.PARQUET,
     ".xlsx": DataFormat.XLSX,
+    ".xls": DataFormat.XLS,
+    ".avro": DataFormat.AVRO,
+    ".orc": DataFormat.ORC,
+    ".xml": DataFormat.XML,
 }
-_P1_EXTENSIONS = {".xls", ".avro", ".orc", ".xml", ".gz", ".zip", ".tar"}
+# Converted to Parquet at ingest (ING-003a).
+CONVERTED_FORMATS = frozenset({DataFormat.XLS, DataFormat.AVRO, DataFormat.ORC, DataFormat.XML})
+TEXT_FORMATS = frozenset({DataFormat.CSV, DataFormat.TSV, DataFormat.JSON, DataFormat.JSONL, DataFormat.XML})
 
 
 def detect_encoding(head: bytes) -> str:
@@ -61,14 +76,22 @@ def detect_format(filename: str, head: bytes) -> DataFormat:
     if head.startswith(b"PAR1"):
         return DataFormat.PARQUET
     if head.startswith(b"PK\x03\x04"):
-        if suffix == ".xlsx":
+        if suffix in (".xlsx", ".xlsm"):
             return DataFormat.XLSX
-        raise UnsupportedFormatError("compressed archives are not supported yet (ING-006, Phase 2)")
+        raise UnsupportedFormatError("zip archives are extracted on upload; nested archives are not supported")
+    if head.startswith(b"\x1f\x8b") or head[257:262] == b"ustar":
+        raise UnsupportedFormatError("compressed archives are extracted on upload; nested archives are not supported")
     if head.startswith(b"\xd0\xcf\x11\xe0"):
-        raise UnsupportedFormatError("legacy .xls files are not supported yet (ING-003a, Phase 2); save as .xlsx")
-    if suffix in _P1_EXTENSIONS:
-        raise UnsupportedFormatError(f"{suffix} files are not supported yet (Phase 2)")
+        return DataFormat.XLS  # OLE2 compound document: legacy Excel
+    if head.startswith(b"Obj\x01"):
+        return DataFormat.AVRO
+    if head.startswith(b"ORC"):
+        return DataFormat.ORC
+    if suffix in (".gz", ".zip", ".tar", ".tgz", ".bz2", ".7z", ".rar"):
+        raise UnsupportedFormatError(f"{suffix} files must be valid archives")
     text = head.decode(detect_encoding(head), errors="replace").lstrip("﻿ \t\r\n")
+    if text.startswith("<") or suffix == ".xml":
+        return DataFormat.XML
     if suffix in (".jsonl", ".ndjson"):
         return DataFormat.JSONL
     if text.startswith("["):

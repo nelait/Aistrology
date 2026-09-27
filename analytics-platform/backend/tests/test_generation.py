@@ -135,6 +135,8 @@ def test_exports(shop_schema, fmt):
     elif fmt == ExportFormat.SQL:
         lines = payload.decode().strip().splitlines()
         assert len(lines) == 20 and lines[0].startswith('INSERT INTO "customers"')
+    elif fmt == ExportFormat.XML:  # GEN-008a
+        assert payload.count(b"<row>") == 20 and payload.startswith(b"<?xml")
     else:
         assert len(pd.read_csv(io.BytesIO(payload))) == 20
 

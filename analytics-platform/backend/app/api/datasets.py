@@ -79,9 +79,22 @@ def _single(record: DatasetRecord):
 
 
 def _infer(state: AppState, record: DatasetRecord) -> InferenceResult:
-    table = main_table(record)
-    sample = load_sample(state.store.table_path(record, table), table.format, table.encoding)
-    return infer_schema(sample, entity_name=table.name)
+    if len(record.tables) > 1:
+        # INF-004/INF-005: one entity per table, plus keys and foreign keys across tables.
+        from ..ingestion.relationships import infer_multi_table
+
+        frames = {t.name: load_sample(state.store.table_path(record, t), t.format, t.encoding) for t in record.tables}
+        result = infer_multi_table(frames, name=record.name)
+    else:
+        table = main_table(record)
+        sample = load_sample(state.store.table_path(record, table), table.format, table.encoding)
+        result = infer_schema(sample, entity_name=table.name)
+    # ING-003a / ING-006 / CLN-009: conversions, extraction and transcoding notes.
+    result.warnings = [n for t in record.tables for n in t.notes] + result.warnings
+    return result
+
+
+infer_record = _infer
 
 
 def compute_profile(state: AppState, record: DatasetRecord) -> DatasetProfile:

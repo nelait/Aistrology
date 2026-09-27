@@ -61,6 +61,18 @@ class ColumnReport(BaseModel):
     detected_format: str | None = None  # strptime format for string-encoded dates (INF-002)
     ambiguous_formats: list[str] | None = None
     parse_rate: float | None = None  # share of non-null values that parse as ``type``
+    table: str | None = None  # entity/table name, for multi-table datasets (INF-005)
+
+
+class Relationship(BaseModel):
+    """A detected foreign key between two tables of a dataset (INF-005)."""
+
+    child_entity: str
+    child_field: str
+    parent_entity: str
+    parent_field: str
+    name_score: float
+    containment: float  # share of the child's distinct values found in the parent key
 
 
 class InferenceResult(BaseModel):
@@ -70,6 +82,7 @@ class InferenceResult(BaseModel):
     columns: list[ColumnReport]
     sampled_rows: int
     warnings: list[str]
+    relationships: list[Relationship] = PField(default_factory=list)
 
 
 def normalize_name(raw: str, taken: set[str]) -> str:

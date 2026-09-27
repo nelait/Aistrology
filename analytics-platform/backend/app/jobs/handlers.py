@@ -111,5 +111,6 @@ def export_tenant_job(ctx: JobContext) -> dict:
 
 
 # Register handlers that live with their modules.
+from ..connectors import jobs as _connector_jobs  # noqa: E402,F401
 from ..serving import jobs as _serving_jobs  # noqa: E402,F401
 from ..training import jobs as _training_jobs  # noqa: E402,F401

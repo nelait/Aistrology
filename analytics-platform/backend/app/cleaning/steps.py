@@ -161,6 +161,27 @@ class Deduplicate(_Step):
         return df[keep_mask].reset_index(drop=True)
 
 
+class FuzzyDeduplicate(_Step):
+    """CLN-003a: drop near-duplicate rows (normalized string similarity ≥ ``threshold`` on the key columns).
+
+    Default key columns: every column that isn't unique per row. Blocking (sorted neighbourhood,
+    ``window`` rows) keeps it roughly linear in the row count; see ``app.cleaning.fuzzy``.
+    """
+
+    op: Literal["fuzzy_deduplicate"] = "fuzzy_deduplicate"
+    columns: list[str] | None = Field(default=None, max_length=50)
+    threshold: float = Field(default=0.9, ge=0.5, le=1.0)
+    window: int = Field(default=10, ge=1, le=100)
+    keep: Literal["first", "last"] = "first"
+
+    def apply(self, df):
+        from .fuzzy import find_near_duplicates, keep_mask
+
+        columns = _targets(df, self.columns) if self.columns else None
+        matches = find_near_duplicates(df.reset_index(drop=True), columns, threshold=self.threshold, window=self.window)
+        return df.reset_index(drop=True)[keep_mask(matches, self.keep)].reset_index(drop=True)
+
+
 # -- CLN-004 type conversion ------------------------------------------------------------------
 
 
@@ -438,6 +459,7 @@ Step = Annotated[
     | FillMissing
     | HandleOutliers
     | Deduplicate
+    | FuzzyDeduplicate
     | Cast
     | NormalizeStrings
     | NormalizeDates

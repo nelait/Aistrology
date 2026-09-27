@@ -80,6 +80,17 @@ class Settings:
     # workers are a separate deployment: ``python -m app.jobs.worker``.
     inline_worker: bool = field(default_factory=lambda: _env("AP_INLINE_WORKER", "1") == "1")
 
+    # --- connectors (ING-007) ---------------------------------------------
+    # Platform-level SSRF allowlist (hostnames, "*.suffix" or CIDRs). Unlike a tenant admin's
+    # allowlist it may also permit loopback / link-local hosts. Keep empty in multi-tenant production.
+    connector_host_allowlist: tuple[str, ...] = field(
+        default_factory=lambda: tuple(h.strip() for h in (_env("AP_CONNECTOR_HOST_ALLOWLIST", "") or "").split(",") if h.strip())
+    )
+    # SQLite database URLs as a connector source: tests and local development only.
+    connector_allow_sqlite: bool = field(default_factory=lambda: _env("AP_CONNECTOR_ALLOW_SQLITE") == "1")
+    connector_max_rows: int = field(default_factory=lambda: int(_env("AP_CONNECTOR_MAX_ROWS", "10000000")))
+    connector_query_timeout_seconds: int = field(default_factory=lambda: int(_env("AP_CONNECTOR_QUERY_TIMEOUT", "600")))
+
 
 def load_settings() -> Settings:
     return Settings()
