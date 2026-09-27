@@ -65,6 +65,17 @@ def _drift(state: AppState, principal: Principal, params: dict[str, Any]) -> dic
     return body.model_dump(exclude_none=True)
 
 
+@schedulable("serving.canary_step", Permission.DEPLOY, "Advance or roll back due canary rollouts (API-009)")
+def _canary(state: AppState, principal: Principal, params: dict[str, Any]) -> dict[str, Any]:
+    """No parameters: the job evaluates every rollout of the organization whose next step is due.
+
+    Scheduling it (e.g. every 5 minutes) replaces the per-process timers, which don't survive restarts.
+    """
+    if params:
+        raise ScheduleError("serving.canary_step takes no parameters")
+    return {}
+
+
 class DatasetParams(BaseModel):
     dataset_id: str = Field(min_length=1, max_length=40)
 

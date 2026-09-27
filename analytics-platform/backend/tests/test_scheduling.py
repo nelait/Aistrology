@@ -124,7 +124,13 @@ def test_schedule_api_validation(client, state):
     ds = dataset(client, h)
     base = {"name": "p", "cron": "0 6 * * *", "timezone": "Europe/Berlin", "job_type": "dataset.profile", "params": {"dataset_id": ds}}
     types = client.get("/v1/schedules/types", headers=h).json()
-    assert {t["job_type"] for t in types} >= {"analytics.scheduled_run", "dashboard.deliver", "serving.drift_check", "stream.compact"}
+    assert {t["job_type"] for t in types} >= {
+        "analytics.scheduled_run",
+        "dashboard.deliver",
+        "serving.drift_check",
+        "stream.compact",
+        "serving.canary_step",
+    }
     assert client.post("/v1/schedules", json={**base, "job_type": "tenant.export"}, headers=h).status_code == 422  # not allowlisted
     assert client.post("/v1/schedules", json={**base, "cron": "*/2 * * * *"}, headers=h).status_code == 422  # below 5 minutes
     assert client.post("/v1/schedules", json={**base, "timezone": "Nowhere/City"}, headers=h).status_code == 422
@@ -337,3 +343,13 @@ def test_drift_checks_are_schedulable(client, state):
     drain(state)
     job = client.get(f"/v1/jobs/{r.json()['job_id']}", headers=h).json()
     assert job["type"] == "serving.drift_check" and job["status"] == "succeeded" and job["params"]["hours"] == 12
+
+
+def test_canary_steps_are_schedulable(client, state):
+    """API-009 canary evaluation runs from the scheduler instead of per-process timers."""
+    h = admin_headers(client)
+    base = {"name": "canary", "cron": "*/5 * * * *"}
+    ok = client.post("/v1/schedules", json={**base, "job_type": "serving.canary_step", "params": {}}, headers=h)
+    assert ok.status_code == 201, ok.text
+    bad = client.post("/v1/schedules", json={**base, "name": "c2", "job_type": "serving.canary_step", "params": {"x": 1}}, headers=h)
+    assert bad.status_code == 422
