@@ -14,6 +14,9 @@ import { useToast } from "@/lib/toast";
 import { DeployForm } from "@/components/DeployForm";
 import { DriftTab } from "@/components/endpoints/DriftTab";
 import { ForecastTry } from "@/components/endpoints/ForecastTry";
+import { CanaryTab } from "@/components/endpoints/CanaryTab";
+import { SseTry, WsConsole } from "@/components/endpoints/StreamingTry";
+import { formatPrediction, isAnomalyPrediction } from "@/lib/predictions";
 import { FileDrop } from "@/components/FileDrop";
 import { JobProgress } from "@/components/JobProgress";
 import { Badge, Button, Card, Checkbox, CodeBlock, ConfirmDialog, KeyValue, Modal, PageHeader, QueryState, SelectField, StatTile, TabPanel, Tabs, TextArea } from "@/components/ui";
@@ -120,6 +123,8 @@ function EndpointView({ endpoint }: { endpoint: ServingEndpoint }) {
         tabs={[
           { id: "overview", label: "Overview" },
           { id: "try", label: "Try it" },
+          { id: "streaming", label: "Streaming", hidden: !can("endpoints.predict") },
+          { id: "canary", label: "Canary" },
           { id: "drift", label: "Drift", hidden: forecasting },
           { id: "batch", label: "Batch prediction", hidden: forecasting },
           { id: "code", label: "Code & API docs" },
@@ -183,7 +188,14 @@ function EndpointView({ endpoint }: { endpoint: ServingEndpoint }) {
             </Card>
           </div>
         )}
-        {tab === "try" && (forecasting ? <ForecastTry name={endpoint.name} signature={signature} /> : <TryIt name={endpoint.name} fields={fields} explainable={problemType !== "clustering"} />)}
+        {tab === "try" && (forecasting ? <ForecastTry name={endpoint.name} signature={signature} /> : <TryIt name={endpoint.name} fields={fields} explainable={problemType !== "clustering" && problemType !== "anomaly"} />)}
+        {tab === "streaming" && (
+          <div className="space-y-4">
+            <SseTry name={endpoint.name} fields={fields} forecasting={forecasting} />
+            <WsConsole name={endpoint.name} fields={fields} forecasting={forecasting} />
+          </div>
+        )}
+        {tab === "canary" && <CanaryTab endpoint={endpoint} />}
         {tab === "drift" && <DriftTab name={endpoint.name} />}
         {tab === "batch" && <Batch name={endpoint.name} />}
         {tab === "code" && (
@@ -277,10 +289,23 @@ function TryIt({ name, fields, explainable = true }: { name: string; fields: Sig
       </form>
       {r && (
         <div className="mt-4 space-y-2" aria-live="polite">
-          <p>
-            Prediction: <strong>{String(r.predictions[0])}</strong>{" "}
-            <Badge>model v{typeof r.model_version === "object" ? r.model_version.version : String(r.model_version)}</Badge>
-          </p>
+          {isAnomalyPrediction(r.predictions[0]) ? (
+            <p className="flex flex-wrap items-center gap-2">
+              <Badge tone={r.predictions[0].is_anomaly ? "critical" : "good"}>
+                <span aria-hidden="true">{r.predictions[0].is_anomaly ? "⚠" : "✓"}</span> {r.predictions[0].is_anomaly ? "Anomaly" : "Normal"}
+              </Badge>
+              <span>
+                is_anomaly <code>{String(r.predictions[0].is_anomaly)}</code> · score <strong className="tabular-nums">{formatNumber(r.predictions[0].score, 4)}</strong>
+                {typeof r.threshold === "number" && <> (threshold {formatNumber(r.threshold, 4)}; higher = more anomalous)</>}
+              </span>
+              <Badge>model v{typeof r.model_version === "object" ? r.model_version.version : String(r.model_version)}</Badge>
+            </p>
+          ) : (
+            <p>
+              Prediction: <strong>{formatPrediction(r.predictions[0])}</strong>{" "}
+              <Badge>model v{typeof r.model_version === "object" ? r.model_version.version : String(r.model_version)}</Badge>
+            </p>
+          )}
           {r.probabilities?.[0] && (
             <ul className="text-sm">
               {r.probabilities[0].map((p, i) => (

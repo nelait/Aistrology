@@ -11,6 +11,7 @@ import { EChart } from "../charts/EChart";
 import { DataGrid } from "../DataGrid";
 import { Button, Card, SelectField } from "../ui";
 import { AleChart, ClusterCharts, ForecastCharts } from "./ProblemCharts";
+import { AnomalyCharts } from "./AnomalyCharts";
 
 function ChartCard({ title, option, height = 280, note }: { title: string; option: EChartsOption; height?: number; note?: string }) {
   return (
@@ -40,7 +41,7 @@ export function RunCharts({ run }: { run: Run }) {
   const cm = useMemo(() => confusion(run), [run]);
   const explain = useMutation({ mutationFn: () => api.training.explanationText(run.id), meta: { errorPrefix: "Explanation failed" } });
 
-  const problem = typeof run.metrics.problem_type === "string" ? run.metrics.problem_type : a.cluster_sizes ? "clustering" : a.forecast ? "forecasting" : null;
+  const problem = typeof run.metrics.problem_type === "string" ? run.metrics.problem_type : a.cluster_sizes ? "clustering" : a.forecast ? "forecasting" : a.score_distribution ? "anomaly" : null;
   const cards: React.ReactNode[] = [];
   if (cm) {
     const data: [number, number, number][] = [];
@@ -171,6 +172,7 @@ export function RunCharts({ run }: { run: Run }) {
     <div className="space-y-4">
       {problem === "clustering" && <ClusterCharts run={run} />}
       {problem === "forecasting" && <ForecastCharts run={run} />}
+      {problem === "anomaly" && <AnomalyCharts run={run} />}
       <Card
         title="Plain-English explanation"
         actions={

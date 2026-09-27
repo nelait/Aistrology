@@ -17,6 +17,7 @@ import { PromptsTab } from "@/components/admin/PromptsTab";
 import { NetworkTab, OAuthClientsTab, ScimTab, TeamsTab } from "@/components/admin/AccessTabs";
 import { ConsentTab, CostsTab, SharingTab } from "@/components/admin/GovernanceTabs";
 import { ChatDestinationsTab, InboundHooksTab } from "@/components/admin/IntegrationTabs";
+import { PreferencesCard } from "@/components/analytics/SuggestionFeedback";
 
 const GROUPS: { group: string; tabs: { id: string; label: string }[] }[] = [
   {
@@ -46,6 +47,7 @@ const GROUPS: { group: string; tabs: { id: string; label: string }[] }[] = [
       { id: "llm-health", label: "LLM health" },
       { id: "prompts", label: "Prompts" },
       { id: "consent", label: "Consent" },
+      { id: "preferences", label: "Suggestion preferences" },
     ],
   },
   {
@@ -112,6 +114,7 @@ export default function AdminPage() {
         {tab === "llm-health" && <LlmHealthTab />}
         {tab === "prompts" && <PromptsTab />}
         {tab === "consent" && <ConsentTab />}
+        {tab === "preferences" && <PreferencesCard />}
         {tab === "webhooks" && <WebhooksTab />}
         {tab === "inbound" && <InboundHooksTab />}
         {tab === "chat" && <ChatDestinationsTab />}

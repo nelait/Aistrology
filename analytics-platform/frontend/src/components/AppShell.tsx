@@ -26,7 +26,9 @@ export const NAV: NavItem[] = [
   { href: "/models", label: "Models", perm: "data.read", icon: "M12 2l9 5v10l-9 5-9-5V7z" },
   { href: "/endpoints", label: "Endpoints", perm: "data.read", icon: "M5 12h14M12 5l7 7-7 7" },
   { href: "/dashboards", label: "Dashboards", perm: "view", icon: "M3 3h8v8H3zM13 3h8v5h-8zM13 10h8v11h-8zM3 13h8v8H3z" },
+  { href: "/schedules", label: "Schedules", perm: "view", icon: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" },
   { href: "/jobs", label: "Jobs", perm: "data.read", icon: "M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
+  { href: "/api-explorer", label: "API explorer", perm: "view", icon: "M8 9l-3 3 3 3M16 9l3 3-3 3M13 6l-2 12" },
   { href: "/admin", label: "Admin", perm: "tenant.manage", icon: "M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-2.9-1.2l-.1.1a2 2 0 11-2.8-2.8l.1-.1A1.7 1.7 0 003 15H3a2 2 0 110-4h.1a1.7 1.7 0 001.2-2.9l-.1-.1a2 2 0 112.8-2.8l.1.1A1.7 1.7 0 009 4.6V4a2 2 0 114 0v.1a1.7 1.7 0 002.9 1.2l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 001.2 2.9H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" },
 ];
 

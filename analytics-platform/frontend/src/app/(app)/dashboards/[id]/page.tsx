@@ -18,6 +18,7 @@ import { FilterBar } from "@/components/dashboard/FilterBar";
 import { ShareDialog } from "@/components/dashboard/ShareDialog";
 import { SettingsDialog } from "@/components/dashboard/SettingsDialog";
 import { exportDashboardPng } from "@/components/dashboard/exportPng";
+import { CommentsPanel, openThreadCounts, useDashboardComments } from "@/components/dashboard/CommentsPanel";
 import { Badge, Button, EmptyState, QueryState, SelectField, Tabs, cx } from "@/components/ui";
 
 const ROW_HEIGHT = 36;
@@ -39,6 +40,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
   const qc = useQueryClient();
   const params = useSearchParams();
   const canEdit = can("dashboards.edit") && dashboard.your_role !== "viewer";
+  const canModerate = dashboard.your_role === "owner" || dashboard.your_role === "editor" || can("tenant.manage");
 
   const [spec, setSpec] = useState<DashboardSpec>(() => normalizeSpec(dashboard.spec));
   const [name, setName] = useState(dashboard.name);
@@ -55,6 +57,10 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
   const [refresh, setRefresh] = useState<number>(spec.refresh_seconds ?? 0);
   const [presenting, setPresenting] = useState(false);
   const [exportMenu, setExportMenu] = useState(false);
+  const [commentScope, setCommentScope] = useState<string | null>(null);
+  const comments = useDashboardComments(dashboard.id);
+  const commentCounts = useMemo(() => openThreadCounts(comments.data), [comments.data]);
+  const openComments = [...commentCounts.values()].reduce((a, b) => a + b, 0);
   const shellRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const charts = useRef(new Map<string, EChartsType>());
@@ -207,6 +213,8 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
       onEdit={() => setSelected(w.id)}
       onRemove={() => removeWidget(w.id)}
       onDuplicate={() => duplicateWidget(w)}
+      commentCount={presenting ? undefined : commentCounts.get(w.id) ?? 0}
+      onComments={presenting ? undefined : () => setCommentScope(w.id)}
     >
       {(visible) => (
         <WidgetBody
@@ -287,6 +295,9 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
               </div>
             )}
           </div>
+          <Button size="sm" onClick={() => setCommentScope("")} aria-label={`Comments (${openComments} open)`}>
+            Comments{openComments ? <Badge tone="info">{openComments}</Badge> : null}
+          </Button>
           {canEdit && (
             <Button size="sm" onClick={() => setShareOpen(true)}>
               Share
@@ -434,6 +445,16 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
         }}
       />
       <ShareDialog dashboardId={dashboard.id} open={shareOpen} onClose={() => setShareOpen(false)} />
+      {commentScope !== null && (
+        <CommentsPanel
+          dashboardId={dashboard.id}
+          widgets={spec.pages.flatMap((p) => p.widgets)}
+          scope={commentScope}
+          onScope={setCommentScope}
+          canModerate={canModerate}
+          onClose={() => setCommentScope(null)}
+        />
+      )}
     </div>
   );
 }

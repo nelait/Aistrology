@@ -30,9 +30,14 @@ export default function AnalyticsPage() {
         description="Saved, reusable and parameterized analytics. Build them visually, in SQL, or accept AI suggestions from a dataset."
         actions={
           can("analytics.create") && (
-            <Link href="/analytics/new" className="rounded-md bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700">
-              New analytic
-            </Link>
+            <>
+              <Link href="/analytics/new?mode=multi" className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-sm hover:bg-[var(--surface-2)]">
+                Query multiple datasets
+              </Link>
+              <Link href="/analytics/new" className="rounded-md bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700">
+                New analytic
+              </Link>
+            </>
           )
         }
       />

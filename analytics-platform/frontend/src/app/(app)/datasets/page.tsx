@@ -10,6 +10,7 @@ import { useToast } from "@/lib/toast";
 import { MAX_DATASET_BYTES, TOO_LARGE_MESSAGE } from "@/lib/constants";
 import { FileDrop } from "@/components/FileDrop";
 import { IngestNotes } from "@/components/dataset/IngestNotes";
+import { CreateStreamDialog } from "@/components/dataset/StreamPanel";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, PageHeader, ProgressBar, QueryState, SelectField } from "@/components/ui";
 
 
@@ -42,6 +43,7 @@ export default function DatasetsPage() {
   const datasets = useQuery({ queryKey: ["datasets", projectId], queryFn: () => api.datasets.list(projectId || undefined) });
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [toDelete, setToDelete] = useState<DatasetRecord | null>(null);
+  const [streamOpen, setStreamOpen] = useState(false);
   const [, force] = useState(0);
   const active = useRef(0);
   const queue = useRef<UploadItem[]>([]);
@@ -116,9 +118,12 @@ export default function DatasetsPage() {
         description="Upload files, review inferred schemas, profile, query and clean your data."
         actions={
           can("data.write") && (
-            <Link href="/generate" className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-sm font-medium hover:bg-[var(--surface-2)]">
-              Generate sample data
-            </Link>
+            <>
+              <Button onClick={() => setStreamOpen(true)}>New stream</Button>
+              <Link href="/generate" className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-sm font-medium hover:bg-[var(--surface-2)]">
+                Generate sample data
+              </Link>
+            </>
           )
         }
       />
@@ -273,7 +278,7 @@ export default function DatasetsPage() {
                         {!d.schema?.entities?.length && <Badge tone="warning" className="ml-2">schema not confirmed</Badge>}
                       </td>
                       <td className="px-4 py-2">v{d.latest_version ?? d.version}</td>
-                      <td className="px-4 py-2">{d.source}</td>
+                      <td className="px-4 py-2">{d.source === "stream" ? <Badge tone="info">stream</Badge> : d.source}</td>
                       <td className="px-4 py-2 text-xs">{d.tables.map((t) => `${t.name} (${t.format}${t.row_count ? `, ${t.row_count.toLocaleString()} rows` : ""})`).join(", ")}</td>
                       <td className="px-4 py-2 text-right tabular-nums">{formatBytes(d.size_bytes)}</td>
                       <td className="px-4 py-2 text-xs">{formatDate(d.created_at)}</td>
@@ -306,6 +311,7 @@ export default function DatasetsPage() {
           This permanently deletes <strong>{toDelete?.name}</strong> and all its versions.
         </p>
       </ConfirmDialog>
+      <CreateStreamDialog open={streamOpen} onClose={() => setStreamOpen(false)} projectId={projectId || undefined} />
     </div>
   );
 }

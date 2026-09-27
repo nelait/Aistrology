@@ -38,6 +38,8 @@ export function WidgetFrame({
   onEdit,
   onRemove,
   onDuplicate,
+  commentCount,
+  onComments,
   children,
 }: {
   widget: Widget;
@@ -47,6 +49,9 @@ export function WidgetFrame({
   onEdit?: () => void;
   onRemove?: () => void;
   onDuplicate?: () => void;
+  /** SHR-005: open comment threads on this widget */
+  commentCount?: number;
+  onComments?: () => void;
   children: (visible: boolean) => React.ReactNode;
 }) {
   const { ref, seen } = useInView<HTMLDivElement>();
@@ -69,6 +74,19 @@ export function WidgetFrame({
           </span>
         )}
         <h3 className={cx("min-w-0 flex-1 truncate text-sm font-semibold", bare && !editing && "sr-only")}>{widget.title}</h3>
+        {onComments && (
+          <button
+            type="button"
+            onClick={onComments}
+            className={cx("no-print inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs hover:bg-[var(--surface-2)]", commentCount ? "text-brand-700 dark:text-brand-300" : "text-[var(--text-2)]")}
+            aria-label={commentCount ? `${commentCount} open comment thread${commentCount === 1 ? "" : "s"} on ${widget.title}` : `Comment on ${widget.title}`}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12a8 8 0 01-11.6 7.1L4 20l1-4.4A8 8 0 1121 12z" />
+            </svg>
+            {commentCount ? <span className="min-w-4 rounded-full bg-brand-600 px-1 text-[10px] font-semibold leading-4 text-white">{commentCount}</span> : null}
+          </button>
+        )}
         {editing && (
           <span className="no-print flex gap-0.5">
             <button type="button" onClick={onEdit} className="rounded px-1.5 py-0.5 text-xs hover:bg-[var(--surface-2)]" aria-label={`Configure ${widget.title}`}>
