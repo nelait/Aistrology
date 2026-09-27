@@ -126,6 +126,8 @@ def test_end_to_end_journey(tmp_path, monkeypatch, capsys):
     sys.path.insert(0, str(BACKEND))
     for var in ("AP_CLOUD_PROVIDER", "AP_DATABASE_URL", "AP_DEV_AUTH"):
         monkeypatch.delenv(var, raising=False)
+    # The in-process app would otherwise write JSON access logs to the stdout the CLI assertions capture.
+    monkeypatch.setenv("AP_JSON_LOGS", "0")
     from fastapi.testclient import TestClient
 
     from app.api.deps import build_state
