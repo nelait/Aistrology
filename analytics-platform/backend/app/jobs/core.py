@@ -219,6 +219,8 @@ class Worker:
         self.state.metering.add(tenant_id, "compute.seconds", job_type, elapsed)
         if status in ("succeeded", "failed"):
             self.state.audit.record(tenant_id, "system", f"job.{status}", job_id=job_id, type=job_type, seconds=round(elapsed, 3))
+        # Webhook deliveries never notify: a failing delivery would otherwise emit job.failed → another delivery → …
+        if status in ("succeeded", "failed") and not job_type.startswith("webhook."):
             notify(
                 self.state,
                 tenant_id,

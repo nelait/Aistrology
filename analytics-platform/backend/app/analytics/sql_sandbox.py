@@ -109,6 +109,7 @@ def run_query(
     *,
     row_limit: int | None = None,
     timeout_seconds: float | None = None,
+    params: dict[str, Any] | None = None,
 ) -> QueryResult:
     sql = sql.strip().rstrip(";").strip()
     validate_select(sql)
@@ -124,7 +125,8 @@ def run_query(
     timer.start()
     try:
         # Newlines keep a trailing ``--`` comment in the user SQL from swallowing the wrapper.
-        cursor = con.execute(f"SELECT * FROM (\n{sql}\n) AS q LIMIT {row_limit + 1}")
+        wrapped = f"SELECT * FROM (\n{sql}\n) AS q LIMIT {row_limit + 1}"
+        cursor = con.execute(wrapped, params) if params else con.execute(wrapped)
         columns = [d[0] for d in cursor.description]
         rows = cursor.fetchall()
     except duckdb.InterruptException as exc:

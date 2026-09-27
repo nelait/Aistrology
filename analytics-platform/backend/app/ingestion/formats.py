@@ -93,14 +93,20 @@ def _sql_str(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+# BOOLEAN is left out on purpose: DuckDB would turn labels like "yes"/"no" or "Y"/"N" into
+# true/false, silently changing the user's values. Inference still reports such columns as
+# boolean-like, and a cast step converts them explicitly.
+_TYPE_CANDIDATES = "auto_type_candidates=['BIGINT', 'DOUBLE', 'DATE', 'TIMESTAMP', 'TIME', 'VARCHAR']"
+
+
 def relation_sql(path: Path, fmt: DataFormat, encoding: str = "utf-8") -> str:
     """A DuckDB table expression that reads the file."""
     p = _sql_str(str(path))
     if fmt == DataFormat.CSV:
         enc = "utf-8" if encoding == "utf-8-sig" else encoding
-        return f"read_csv({p}, header=true, sample_size=20480, encoding={_sql_str(enc)})"
+        return f"read_csv({p}, header=true, sample_size=20480, encoding={_sql_str(enc)}, {_TYPE_CANDIDATES})"
     if fmt == DataFormat.TSV:
-        return f"read_csv({p}, header=true, delim='\\t', sample_size=20480)"
+        return f"read_csv({p}, header=true, delim='\\t', sample_size=20480, {_TYPE_CANDIDATES})"
     if fmt == DataFormat.JSON:
         return f"read_json_auto({p}, format='array')"
     if fmt == DataFormat.JSONL:
