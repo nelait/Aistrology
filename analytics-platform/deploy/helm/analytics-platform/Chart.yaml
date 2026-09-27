@@ -1,0 +1,11 @@
+apiVersion: v2
+name: analytics-platform
+description: Analytics Platform backend (API + job worker) for GKE or EKS
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+keywords:
+  - analytics
+  - fastapi
+home: https://github.com/nelait/Aistrology/tree/main/analytics-platform

@@ -14,6 +14,9 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 
+import defusedxml.ElementTree as SafeET
+from defusedxml import DefusedXmlException
+
 from .model import Entity, Field, FieldType, ForeignKey, Issue, Schema, SchemaValidationError, ensure_valid
 from .semantics import guess_semantic
 
@@ -235,7 +238,9 @@ def parse_xsd(source: str) -> tuple[Schema, list[Issue]]:
         # SEC-011: no DTDs / entity declarations (XXE, billion laughs).
         raise SchemaValidationError([Issue(path="/", message="DOCTYPE and ENTITY declarations are not allowed")])
     try:
-        root = ET.fromstring(source)
+        root = SafeET.fromstring(source)  # defusedxml: no DTDs, entities or external references
+    except DefusedXmlException as exc:
+        raise SchemaValidationError([Issue(path="/", message=f"unsafe XML construct: {exc}")]) from exc
     except ET.ParseError as exc:
         line, col = exc.position
         raise SchemaValidationError([Issue(path=f"{line}:{col}", message=str(exc))]) from exc

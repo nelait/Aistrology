@@ -1,0 +1,190 @@
+name: analytics-platform CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "analytics-platform/**"
+      - ".github/workflows/analytics-platform-ci.yml"
+  pull_request:
+    paths:
+      - "analytics-platform/**"
+      - ".github/workflows/analytics-platform-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: analytics-platform-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: "1.9.8"
+  HELM_VERSION: "v3.16.2"
+
+jobs:
+  backend:
+    name: backend (lint, test, SAST, dependency audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: analytics-platform/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: analytics-platform/backend/pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format
+        run: ruff format --check .
+
+      - name: Tests
+        run: pytest -q
+
+      # SEC-006: static application security testing. High severity blocks;
+      # medium findings are reported without failing (the sandboxed-SQL
+      # builders intentionally trip B608).
+      - name: SAST (bandit)
+        run: |
+          pip install "bandit>=1.7"
+          bandit -r app --severity-level medium --confidence-level medium --exit-zero
+          bandit -r app --severity-level high --confidence-level medium
+
+      # SEC-008: known-vulnerable dependencies.
+      - name: Dependency audit (pip-audit)
+        run: |
+          pip install "pip-audit>=2.7"
+          pip-audit --skip-editable --progress-spinner off
+
+  secrets:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # SEC-006/SEC-008: committed secrets. Organisation-owned repos need a
+      # GITLEAKS_LICENSE secret; personal repos do not.
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  terraform:
+    name: terraform (fmt, validate)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: analytics-platform/infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Format
+        run: terraform fmt -check -recursive -diff
+
+      - name: Validate gcp-prod
+        working-directory: analytics-platform/infra/terraform/envs/gcp-prod
+        run: terraform init -backend=false -input=false && terraform validate
+
+      - name: Validate aws-prod
+        working-directory: analytics-platform/infra/terraform/envs/aws-prod
+        run: terraform init -backend=false -input=false && terraform validate
+
+  helm:
+    name: helm (lint, template)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: analytics-platform/deploy/helm/analytics-platform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Lint (GCP overlay)
+        run: helm lint --strict . -f values-gcp.yaml
+
+      - name: Lint (AWS overlay)
+        run: helm lint --strict . -f values-aws.yaml
+
+      - name: Render
+        run: |
+          helm template ci . -f values-gcp.yaml > /dev/null
+          helm template ci . -f values-aws.yaml > /dev/null
+
+  docker:
+    name: docker (build, image scan)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: analytics
+          POSTGRES_PASSWORD: analytics # CI-only throwaway database
+          POSTGRES_DB: analytics
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U analytics -d analytics"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: analytics-platform/backend
+          file: analytics-platform/deploy/docker/Dockerfile
+          push: false
+          load: true
+          tags: analytics-platform-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          docker run -d --name ap --network host \
+            -e AP_CLOUD_PROVIDER=local \
+            -e AP_INLINE_WORKER=1 \
+            -e AP_DATABASE_URL=postgresql+psycopg://analytics:analytics@127.0.0.1:5432/analytics \
+            analytics-platform-backend:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/healthz; then exit 0; fi
+            sleep 2
+          done
+          docker logs ap
+          exit 1
+
+      # SEC-008: container image scanning (fails on fixable critical CVEs).
+      - name: Image scan (grype)
+        uses: anchore/scan-action@v6
+        with:
+          image: analytics-platform-backend:${{ github.sha }}
+          severity-cutoff: critical
+          only-fixed: true
+          fail-build: true
+          output-format: table

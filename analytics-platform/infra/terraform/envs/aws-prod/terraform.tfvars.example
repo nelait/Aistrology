@@ -1,0 +1,18 @@
+# Copy to terraform.tfvars (git-ignored) and adjust.
+region = "us-east-1" # or eu-west-1 / eu-central-1 for EU residency
+
+name = "analytics"
+env  = "prod"
+
+k8s_namespace       = "analytics"
+k8s_service_account = "analytics-platform"
+
+eks_public_access_cidrs = ["203.0.113.0/24"] # corp VPN / CI egress; [] = private only
+
+node_instance_types = ["m6i.xlarge"]
+db_instance_class   = "db.m6g.large"
+
+secret_prefix       = "analytics"
+jwt_secret_name     = "jwt-signing-key"
+enable_guardduty    = true # false if a detector already exists in this account/region
+deletion_protection = true

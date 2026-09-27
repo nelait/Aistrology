@@ -28,6 +28,7 @@ dependencies = [
     "optuna>=3.6",
     "shap>=0.45",
     "skops>=0.10",
+    "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]

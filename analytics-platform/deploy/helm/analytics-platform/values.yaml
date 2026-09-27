@@ -1,0 +1,184 @@
+# Cloud the chart targets: gcp | aws | local.
+# Drives AP_CLOUD_PROVIDER, the ServiceAccount identity annotation
+# (GKE Workload Identity vs. EKS IRSA) and cloud-specific extras.
+# Use values-gcp.yaml / values-aws.yaml as overlays.
+cloud: gcp
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: analytics-platform/backend # e.g. <region>-docker.pkg.dev/<project>/<repo>/backend or <acct>.dkr.ecr.<region>.amazonaws.com/<repo>
+  tag: "" # defaults to .Chart.AppVersion; prefer an immutable git SHA tag
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Non-secret backend environment (rendered into a ConfigMap). Fill from
+# `terraform output -json app_env` (everything except AP_DATABASE_URL).
+# AP_CLOUD_PROVIDER is set from .Values.cloud and need not be listed.
+# Empty values are omitted. AP_DEV_AUTH is rejected unless cloud=local.
+env:
+  AP_DATA_DIR: /data # emptyDir: local scratch / decrypted cache
+  AP_INLINE_WORKER: "0" # jobs run in the worker Deployment, not in the API
+  HOME: /tmp # root filesystem is read-only; libraries that write to ~ use /tmp
+  AP_OBJECT_BUCKET: ""
+  AP_SECRET_PREFIX: analytics
+  AP_JWT_SECRET_NAME: jwt-signing-key
+  # GCP
+  AP_GCP_PROJECT: ""
+  AP_GCP_LOCATION: ""
+  AP_GCP_KMS_KEY: ""
+  AP_GCP_PUBSUB_TOPIC: ""
+  AP_GCP_PUBSUB_SUBSCRIPTION: ""
+  # AWS
+  AP_AWS_REGION: ""
+  AP_AWS_KMS_KEY_ID: ""
+  AP_AWS_SQS_QUEUE_URL: ""
+
+# Secret environment (AP_DATABASE_URL, ...). Reference a Secret created out of
+# band (e.g. by External Secrets Operator from Secret Manager / Secrets
+# Manager, or `kubectl create secret generic`). Every key becomes an env var.
+secretEnv:
+  existingSecret: "" # e.g. analytics-platform-secrets
+
+serviceAccount:
+  create: true
+  name: "" # defaults to the fullname; must match the Terraform k8s_service_account
+  automountServiceAccountToken: false
+  # cloud=gcp -> iam.gke.io/gcp-service-account
+  gcpServiceAccount: ""
+  # cloud=aws -> eks.amazonaws.com/role-arn
+  awsRoleArn: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+# Writable scratch space (the root filesystem is read-only).
+volumes:
+  tmp:
+    sizeLimit: 1Gi
+  data:
+    # Local cache for datasets pulled from object storage (1 GB per dataset, D3).
+    sizeLimit: 8Gi
+
+api:
+  replicaCount: 3
+  containerPort: 8000
+  command: []
+  args: []
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  pdb:
+    enabled: true
+    minAvailable: 2
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+worker:
+  enabled: true
+  replicaCount: 2
+  command: ["python", "-m", "app.jobs.worker"]
+  args: []
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      memory: 4Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  pdb:
+    enabled: true
+    minAvailable: 1
+  # Jobs can run for a while; give them time to finish/nack on shutdown.
+  terminationGracePeriodSeconds: 120
+  livenessProbe: {}
+  readinessProbe: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Spread replicas across zones (SOC-AVL-002).
+topologySpread:
+  enabled: true
+  maxSkew: 1
+  whenUnsatisfiable: ScheduleAnyway
+
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  host: api.example.com
+  path: /
+  pathType: Prefix
+  tls:
+    enabled: true
+    secretName: analytics-platform-tls
+
+networkPolicy:
+  enabled: true
+  # Sources allowed to reach the API pods. Empty = any source (cloud load
+  # balancers send traffic straight to pod IPs), but only on the API port.
+  apiIngressFrom: []
+  # Allowed egress ports besides DNS (443: cloud APIs + LLM providers,
+  # 5432: Postgres).
+  egressPorts: [443, 5432]
+  # Extra raw egress rules (e.g. GKE metadata server for Workload Identity).
+  extraEgress: []
+
+# GKE-only extras (cloud=gcp).
+gcp:
+  backendConfig:
+    enabled: false
+    securityPolicy: "" # Cloud Armor policy name (terraform output security_policy_name)
