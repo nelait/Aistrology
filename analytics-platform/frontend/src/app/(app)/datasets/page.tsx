@@ -9,7 +9,7 @@ import { eta, formatBytes, formatDate, formatDuration } from "@/lib/format";
 import { useToast } from "@/lib/toast";
 import { MAX_DATASET_BYTES, TOO_LARGE_MESSAGE } from "@/lib/constants";
 import { FileDrop } from "@/components/FileDrop";
-import { Badge, Button, Card, ConfirmDialog, EmptyState, PageHeader, ProgressBar, QueryState } from "@/components/ui";
+import { Badge, Button, Card, ConfirmDialog, EmptyState, PageHeader, ProgressBar, QueryState, SelectField } from "@/components/ui";
 
 
 const ACCEPT = ".csv,.tsv,.txt,.json,.jsonl,.ndjson,.parquet,.xlsx,.xls,.xml,.gz,.zip,.avro,.orc";
@@ -26,6 +26,7 @@ interface UploadItem {
   dataset?: DatasetRecord;
   warnings?: string[];
   abort?: AbortController;
+  projectId?: string;
 }
 
 export default function DatasetsPage() {
@@ -34,7 +35,9 @@ export default function DatasetsPage() {
   const toast = useToast();
   const router = useRouter();
   const welcome = useSearchParams().get("welcome") === "1";
-  const datasets = useQuery({ queryKey: ["datasets"], queryFn: api.datasets.list });
+  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.projects.list(), meta: { silent: true } });
+  const [projectId, setProjectId] = useState("");
+  const datasets = useQuery({ queryKey: ["datasets", projectId], queryFn: () => api.datasets.list(projectId || undefined) });
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [toDelete, setToDelete] = useState<DatasetRecord | null>(null);
   const [, force] = useState(0);
@@ -57,6 +60,7 @@ export default function DatasetsPage() {
             force((n) => n + 1);
           },
           abort.signal,
+          item.projectId || undefined,
         )
         .then((res) => {
           patch(item.key, { status: "done", dataset: res.dataset, warnings: res.inference?.warnings ?? [] });
@@ -84,7 +88,7 @@ export default function DatasetsPage() {
       const key = `${Date.now()}-${i}-${file.name}`;
       if (file.size > MAX_DATASET_BYTES) return { key, file, status: "error", loaded: 0, total: file.size, error: `${file.name}: ${TOO_LARGE_MESSAGE}` };
       if (file.size === 0) return { key, file, status: "error", loaded: 0, total: 0, error: "File is empty" };
-      return { key, file, status: "queued", loaded: 0, total: file.size };
+      return { key, file, status: "queued", loaded: 0, total: file.size, projectId };
     });
     items.filter((i) => i.status === "error").forEach((i) => toast.error(i.error!));
     setUploads((u) => [...items, ...u]);
@@ -132,6 +136,18 @@ export default function DatasetsPage() {
             </li>
           </ol>
         </Card>
+      )}
+
+      {(projects.data?.length ?? 0) > 1 && (
+        <SelectField
+          label="Project"
+          hint="Uploads go to this project; the list below shows its datasets."
+          className="max-w-xs"
+          value={projectId}
+          onChange={(e) => setProjectId(e.target.value)}
+          options={(projects.data ?? []).map((p) => ({ value: p.id, label: `${p.name}${p.open ? "" : " (restricted)"}` }))}
+          placeholder="All projects (uploads → Default)"
+        />
       )}
 
       {can("data.write") && (

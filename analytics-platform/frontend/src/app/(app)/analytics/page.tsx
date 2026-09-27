@@ -13,7 +13,7 @@ export default function AnalyticsPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const q = useQuery({ queryKey: ["analytics"], queryFn: api.analytics.list });
-  const datasets = useQuery({ queryKey: ["datasets"], queryFn: api.datasets.list });
+  const datasets = useQuery({ queryKey: ["datasets"], queryFn: () => api.datasets.list() });
   const [del, setDel] = useState<Analytic | null>(null);
   const remove = useMutation({
     mutationFn: (id: string) => api.analytics.remove(id),

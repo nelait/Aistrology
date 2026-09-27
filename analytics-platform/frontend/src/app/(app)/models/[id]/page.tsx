@@ -67,7 +67,10 @@ export default function ModelPage() {
                   .sort((a, b) => b.version - a.version)
                   .map((v) => (
                     <tr key={v.version} className="border-t border-[var(--border)] align-top">
-                      <td className="px-3 py-2 font-medium">v{v.version}</td>
+                      <td className="px-3 py-2 font-medium">
+                        v{v.version}
+                        {v.algorithm && <span className="block text-xs font-normal text-[var(--text-2)]">{v.algorithm}</span>}
+                      </td>
                       <td className="px-3 py-2">
                         {can("endpoints.deploy") ? (
                           <SelectField

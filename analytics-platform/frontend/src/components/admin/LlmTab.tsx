@@ -6,11 +6,18 @@ import { useToast } from "@/lib/toast";
 import { Badge, Button, Card, Checkbox, ConfirmDialog, QueryState, SelectField, TextField, cx } from "../ui";
 
 const KINDS: { value: ProviderKind; label: string }[] = [
+  { value: "platform", label: "Platform-provided (metered monthly allowance)" },
   { value: "anthropic", label: "Anthropic" },
   { value: "openai", label: "OpenAI" },
   { value: "gemini", label: "Google Gemini" },
   { value: "openai_compatible", label: "OpenAI-compatible (self-hosted / other)" },
   { value: "mock", label: "Mock (testing)" },
+];
+
+const TASKS = [
+  { id: "analytics.suggest", label: "Analytics suggestions" },
+  { id: "schema.from_text", label: "Schema from text" },
+  { id: "model.explain", label: "Model explanations" },
 ];
 
 export const LEVELS: { value: DataMinimization; title: string; text: string }[] = [
@@ -97,7 +104,7 @@ export function LlmTab() {
                       <SelectField label="Provider" value={p.kind} onChange={(e) => setProvider(i, { kind: e.target.value as ProviderKind })} options={KINDS} />
                       <TextField label="Model" value={p.model ?? ""} onChange={(e) => setProvider(i, { model: e.target.value })} placeholder={p.kind === "openai_compatible" ? "required" : "provider default"} />
                       {p.kind === "openai_compatible" && <TextField label="Base URL" type="url" value={p.base_url ?? ""} onChange={(e) => setProvider(i, { base_url: e.target.value })} placeholder="https://…" hint="Must use https://" />}
-                      {p.kind !== "mock" && (
+                      {p.kind !== "mock" && p.kind !== "platform" && (
                         <SelectField
                           label="API key secret"
                           value={p.secret_name ?? ""}
@@ -114,6 +121,26 @@ export function LlmTab() {
               <Button className="mt-3" size="sm" disabled={cfg.chain.length >= 5} onClick={() => setCfg({ ...cfg, chain: [...cfg.chain, { kind: "anthropic" }] })}>
                 + Add fallback provider
               </Button>
+              <fieldset className="mt-5 space-y-2">
+                <legend className="text-sm font-semibold">Model per task (primary provider)</legend>
+                <p className="text-xs text-[var(--text-2)]">Optional: use a different model for specific tasks. Empty = the provider&apos;s model above.</p>
+                <div className="grid gap-3 md:grid-cols-3">
+                  {TASKS.map((t) => (
+                    <TextField
+                      key={t.id}
+                      label={t.label}
+                      value={cfg.task_models?.[t.id] ?? ""}
+                      onChange={(e) => {
+                        const next = { ...(cfg.task_models ?? {}) };
+                        if (e.target.value.trim()) next[t.id] = e.target.value.trim();
+                        else delete next[t.id];
+                        setCfg({ ...cfg, task_models: next });
+                      }}
+                      placeholder="default"
+                    />
+                  ))}
+                </div>
+              </fieldset>
             </Card>
 
             <Card title="Data minimization">

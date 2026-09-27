@@ -4,6 +4,12 @@ import { api } from "@/lib/api";
 import { formatBytes, formatNumber } from "@/lib/format";
 import { Card, QueryState, StatTile } from "../ui";
 
+function fmt(k: string, v: number): string {
+  if (/second/.test(k)) return `${formatNumber(Math.round(v))} s`;
+  if (/usd|cost/.test(k)) return `$${v.toFixed(4)}`;
+  return formatNumber(v);
+}
+
 function label(k: string) {
   return k.replace(/[._]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -16,11 +22,37 @@ export function UsageTab() {
     <div className="space-y-5">
       <QueryState query={usage}>
         {(u) => (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <StatTile label="Storage" value={formatBytes(u.storage_bytes)} />
-            {Object.entries(u.counters).map(([k, v]) => (
-              <StatTile key={k} label={label(k)} value={/second/.test(k) ? `${formatNumber(Math.round(v))} s` : formatNumber(v)} />
-            ))}
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <StatTile label="Storage" value={formatBytes(u.storage_bytes)} />
+              {Object.entries(u.counters).map(([k, v]) => {
+                const total = typeof v === "number" ? v : Object.values(v).reduce((a, b) => a + b, 0);
+                return <StatTile key={k} label={label(k)} value={fmt(k, total)} />;
+              })}
+            </div>
+            <Card title="Breakdown" bodyClassName="p-0 overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <caption className="sr-only">Usage breakdown</caption>
+                <thead className="bg-[var(--surface-2)] text-xs">
+                  <tr>
+                    <th scope="col" className="px-3 py-2">Metric</th>
+                    <th scope="col" className="px-3 py-2">By</th>
+                    <th scope="col" className="px-3 py-2 text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(u.counters).flatMap(([k, v]) =>
+                    (typeof v === "number" ? [["—", v] as [string, number]] : Object.entries(v)).map(([by, n]) => (
+                      <tr key={`${k}-${by}`} className="border-t border-[var(--border)]">
+                        <td className="px-3 py-1.5">{label(k)}</td>
+                        <td className="px-3 py-1.5 font-mono text-xs">{by}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{fmt(k, n)}</td>
+                      </tr>
+                    )),
+                  )}
+                </tbody>
+              </table>
+            </Card>
           </div>
         )}
       </QueryState>

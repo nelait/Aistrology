@@ -1,7 +1,7 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api, client, localTokenStorage, type LoginRequest, type Me } from "./api";
+import { api, client, localTokenStorage, type LoginRequest, type Me, type TokenPair } from "./api";
 import { can } from "./rbac";
 import type { PermissionName } from "./types";
 
@@ -11,6 +11,8 @@ interface AuthCtx {
   status: Status;
   me: Me | null;
   login: (body: LoginRequest) => Promise<void>;
+  /** finish an SSO sign-in with the token pair from the OIDC callback */
+  loginWithTokens: (pair: TokenPair) => Promise<void>;
   logout: () => Promise<void>;
   reloadMe: () => Promise<void>;
   can: (p: PermissionName) => boolean;
@@ -68,6 +70,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [reloadMe],
   );
 
+  const loginWithTokens = useCallback(
+    async (pair: TokenPair) => {
+      client.setTokens(pair);
+      await reloadMe();
+    },
+    [reloadMe],
+  );
+
   const logout = useCallback(async () => {
     const rt = localTokenStorage.get();
     try {
@@ -82,8 +92,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [qc]);
 
   const value = useMemo<AuthCtx>(
-    () => ({ status, me, login, logout, reloadMe, can: (p) => can(me?.role, p) }),
-    [status, me, login, logout, reloadMe],
+    () => ({ status, me, login, loginWithTokens, logout, reloadMe, can: (p) => can(me?.role, p) }),
+    [status, me, login, loginWithTokens, logout, reloadMe],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -4,18 +4,15 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, type EndpointCreate, type EndpointRoute, type ServingEndpoint } from "@/lib/api";
 import { Button, Checkbox, SelectField, TextField } from "./ui";
 
-export function versionId(modelId: string, v: { id?: string; version: number }): string {
-  return v.id ?? `${modelId}:${v.version}`;
-}
 
 /** One-click deploy with optional A/B routes (API-001, MGT-008). */
 export function DeployForm({ initialModel, initialVersion, onDone, existing }: { initialModel?: string; initialVersion?: number; onDone: (e: ServingEndpoint) => void; existing?: ServingEndpoint }) {
   const models = useQuery({ queryKey: ["models"], queryFn: api.models.list });
   const [name, setName] = useState(existing?.name ?? "");
-  const [modelId, setModelId] = useState(existing?.model_id ?? initialModel ?? "");
-  const [version, setVersion] = useState(existing?.version ? String(existing.version) : initialVersion ? String(initialVersion) : "");
-  const [ab, setAb] = useState(!!existing?.routes?.length);
-  const [routes, setRoutes] = useState<EndpointRoute[]>(existing?.routes ?? []);
+  const [modelId, setModelId] = useState(existing?.routes[0]?.model_id ?? initialModel ?? "");
+  const [version, setVersion] = useState(existing?.routes.length === 1 ? String(existing.routes[0].version) : initialVersion ? String(initialVersion) : "");
+  const [ab, setAb] = useState((existing?.routes.length ?? 0) > 1);
+  const [routes, setRoutes] = useState<EndpointRoute[]>(existing?.routes.map((r) => ({ model_version_id: r.model_version_id, weight: r.weight })) ?? []);
   const [minReplicas, setMinReplicas] = useState(String(existing?.min_replicas ?? 1));
   const [logPayloads, setLogPayloads] = useState(existing?.log_payloads ?? false);
   const [cors, setCors] = useState((existing?.cors_origins ?? []).join(", "));
@@ -33,11 +30,8 @@ export function DeployForm({ initialModel, initialVersion, onDone, existing }: {
 
   const submit = useMutation({
     mutationFn: () => {
-      const body: EndpointCreate = {
-        name,
-        model_id: modelId,
-        version: !ab && version ? Number(version) : undefined,
-        routes: ab ? routes.map((r) => ({ ...r, weight: Number(r.weight) })) : undefined,
+      const abRoutes = routes.map((r) => ({ model_version_id: r.model_version_id, weight: Math.round(Number(r.weight)) }));
+      const settings = {
         min_replicas: Number(minReplicas) || 0,
         log_payloads: logPayloads,
         cors_origins: cors
@@ -46,9 +40,14 @@ export function DeployForm({ initialModel, initialVersion, onDone, existing }: {
           .filter(Boolean),
       };
       if (existing) {
-        const { name: _n, ...patch } = body;
-        return api.endpoints.patch(existing.name, patch);
+        // PATCH only accepts routes: a single version is a 100% route.
+        const single = versions.find((v) => String(v.version) === version) ?? versions.find((v) => v.stage === "production");
+        const patchRoutes = ab ? abRoutes : single ? [{ model_version_id: single.id, weight: 100 }] : undefined;
+        return api.endpoints.patch(existing.name, { ...settings, routes: patchRoutes });
       }
+      const body: EndpointCreate = ab
+        ? { name, routes: abRoutes, ...settings }
+        : { name, model_id: modelId, version: version ? Number(version) : undefined, ...settings };
       return api.endpoints.create(body);
     },
     meta: { errorPrefix: existing ? "Endpoint not updated" : "Deployment failed" },
@@ -67,7 +66,7 @@ export function DeployForm({ initialModel, initialVersion, onDone, existing }: {
       <SelectField label="Model" required value={modelId} disabled={!!existing} onChange={(e) => { setModelId(e.target.value); setVersion(""); setRoutes([]); }} options={(models.data ?? []).map((m) => ({ value: m.id, label: m.name }))} placeholder="Choose a model…" />
       <Checkbox label="A/B test: split traffic between versions" checked={ab} onChange={(e) => {
         setAb(e.target.checked);
-        if (e.target.checked && !routes.length && versions.length) setRoutes(versions.slice(0, 2).map((v, i) => ({ model_version_id: versionId(modelId, v), weight: i === 0 ? 90 : 10 })));
+        if (e.target.checked && !routes.length && versions.length) setRoutes(versions.slice(0, 2).map((v, i) => ({ model_version_id: v.id, weight: i === 0 ? 90 : 10 })));
       }} />
       {!ab ? (
         <SelectField
@@ -87,20 +86,23 @@ export function DeployForm({ initialModel, initialVersion, onDone, existing }: {
                 label={`Route ${i + 1} version`}
                 value={r.model_version_id}
                 onChange={(e) => setRoutes(routes.map((x, j) => (j === i ? { ...x, model_version_id: e.target.value } : x)))}
-                options={versions.map((v) => ({ value: versionId(modelId, v), label: `v${v.version} (${v.stage})` }))}
+                options={versions.map((v) => ({ value: v.id, label: `v${v.version} (${v.stage})` }))}
                 placeholder="Version…"
               />
-              <TextField className="w-24" label="Weight" type="number" min={0} value={r.weight} onChange={(e) => setRoutes(routes.map((x, j) => (j === i ? { ...x, weight: Number(e.target.value) } : x)))} />
-              <span className="mb-2 w-12 text-xs text-[var(--text-2)]">{total ? `${Math.round((Number(r.weight) / total) * 100)}%` : "—"}</span>
+              <TextField className="w-24" label="Weight %" type="number" min={0} max={100} step={1} value={r.weight} onChange={(e) => setRoutes(routes.map((x, j) => (j === i ? { ...x, weight: Number(e.target.value) } : x)))} />
               <Button size="sm" variant="ghost" aria-label={`Remove route ${i + 1}`} onClick={() => setRoutes(routes.filter((_, j) => j !== i))}>
                 ✕
               </Button>
             </div>
           ))}
-          <Button size="sm" onClick={() => setRoutes([...routes, { model_version_id: versions[0] ? versionId(modelId, versions[0]) : "", weight: 0 }])} disabled={!versions.length}>
+          <Button size="sm" onClick={() => setRoutes([...routes, { model_version_id: versions[0] ? versions[0].id : "", weight: 0 }])} disabled={!versions.length}>
             + Add route
           </Button>
-          {total === 0 && routes.length > 0 && <p className="text-xs text-red-700 dark:text-red-400">Weights must add up to more than zero.</p>}
+          {routes.length > 0 && total !== 100 && (
+            <p role="alert" className="text-xs text-red-700 dark:text-red-400">
+              Weights must add up to 100 (currently {total}).
+            </p>
+          )}
         </fieldset>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
@@ -109,7 +111,7 @@ export function DeployForm({ initialModel, initialVersion, onDone, existing }: {
       </div>
       <Checkbox label="Log request/response bodies" hint="Off by default; PII is redacted (MGT-006)." checked={logPayloads} onChange={(e) => setLogPayloads(e.target.checked)} />
       <div className="flex justify-end">
-        <Button type="submit" variant="primary" loading={submit.isPending} disabled={!name || !modelId || (ab && (routes.length === 0 || total === 0))}>
+        <Button type="submit" variant="primary" loading={submit.isPending} disabled={!name || !modelId || (ab && (routes.length === 0 || total !== 100 || routes.some((r) => !r.model_version_id)))}>
           {existing ? "Save changes" : "Deploy"}
         </Button>
       </div>

@@ -114,7 +114,7 @@ export interface ApiKeyCreate {
 
 export type ApiKeyWithSecret = ApiKey & { key: string };
 
-export type ProviderKind = "openai" | "openai_compatible" | "anthropic" | "gemini" | "mock";
+export type ProviderKind = "platform" | "openai" | "openai_compatible" | "anthropic" | "gemini" | "mock";
 export type DataMinimization = "L0" | "L1" | "L2" | "L3";
 
 export interface ProviderConfig {
@@ -126,6 +126,8 @@ export interface ProviderConfig {
 
 export interface LLMConfig {
   chain: ProviderConfig[];
+  /** per-task model for the primary provider, e.g. {"analytics.suggest": "claude-sonnet-5"} */
+  task_models?: Record<string, string>;
   data_minimization: DataMinimization;
   cache_enabled: boolean;
 }
@@ -146,7 +148,8 @@ export interface LLMUsage {
 
 export interface Usage {
   storage_bytes: number;
-  counters: Record<string, number>;
+  /** metric → {dimension (endpoint, job type, model…) → amount} */
+  counters: Record<string, Record<string, number> | number>;
 }
 
 export interface AuditEntry {
@@ -158,6 +161,20 @@ export interface AuditEntry {
   detail: Record<string, unknown>;
   prev_hash: string;
   hash: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  /** open projects are visible to everyone in the organization */
+  open: boolean;
+  members: string[];
+  created_at?: string;
+}
+
+export interface SSOSettings {
+  domains: string[];
+  default_role: Role;
 }
 
 // -- Schemas -------------------------------------------------------------------
@@ -277,6 +294,7 @@ export interface TableRecord {
 export interface DatasetRecord {
   id: string;
   tenant_id: string;
+  project_id?: string | null;
   name: string;
   version: number;
   latest_version: number;
@@ -508,7 +526,9 @@ export interface Algorithm {
 export interface DetectResponse {
   problem_type: ProblemType;
   reason: string;
-  classes?: JsonValue[] | null;
+  /** backend returns [{value, count}] (top 100 classes) */
+  classes?: ({ value: string; count: number } | JsonValue)[] | null;
+  imbalance_hint?: string;
 }
 
 export interface ExperimentCreate {
@@ -539,16 +559,10 @@ export interface Experiment {
   name: string;
   dataset_id: string;
   dataset_version?: number | null;
-  target: string;
-  features?: string[] | null;
-  problem_type?: ProblemType | null;
-  status?: string;
-  job_id?: string | null;
-  best_run_id?: string | null;
+  /** The training configuration (target, features, problem_type, split, …) */
+  config: Partial<Omit<ExperimentCreate, "name" | "dataset_id" | "dataset_version">> & Record<string, unknown>;
   created_at?: string;
   created_by?: string;
-  config?: Record<string, unknown>;
-  [key: string]: unknown;
 }
 
 export interface LeaderboardEntry {
@@ -571,6 +585,8 @@ export interface RunArtifacts {
   permutation_importance?: { feature: string; importance: number; std?: number }[];
   shap_summary?: { feature: string; mean_abs_shap: number }[];
   pdp?: Record<string, { grid: number[]; average: number[] }>;
+  shap_beeswarm?: Record<string, { shap: number[]; value: JsonValue[] }>;
+  shap_base_value?: number | number[];
   explanation_text?: string | null;
   classes?: JsonValue[];
   [key: string]: unknown;
@@ -582,23 +598,28 @@ export interface Run {
   status: string;
   algorithm: string;
   params: Record<string, unknown>;
-  metrics: Record<string, number>;
+  /** numeric metrics, plus `problem_type` */
+  metrics: Record<string, number | string>;
   duration_seconds: number | null;
-  artifacts: RunArtifacts;
+  artifacts: RunArtifacts & { is_best?: boolean; warnings?: string[] };
+  created_at?: string;
 }
 
 export interface ExperimentDetail {
   experiment: Experiment;
   runs: Run[];
+  job: Job | null;
 }
 
 export interface CompareResponse {
-  runs: Run[];
+  runs: Pick<Run, "id" | "experiment_id" | "algorithm" | "params" | "metrics">[];
   metrics: string[];
 }
 
 export interface ExplainResponse {
   predictions: JsonValue[];
+  probabilities?: number[][];
+  classes?: JsonValue[];
   shap: Record<string, number>[];
   base_value: number | number[];
 }
@@ -611,18 +632,30 @@ export interface RegisteredModel {
   id: string;
   name: string;
   description?: string | null;
-  latest_version?: number;
+  latest_version?: number | null;
+  production_version?: number | null;
   created_at?: string;
-  [key: string]: unknown;
+}
+
+export interface RegisterResponse {
+  model_id: string;
+  name: string;
+  version: number;
+  model_version_id: string;
+  stage: Stage;
 }
 
 export interface SignatureField {
   name: string;
   type: string;
+  categories?: string[];
+  min?: number | null;
+  max?: number | null;
 }
 
 export interface ModelVersion {
-  id?: string;
+  id: string;
+  algorithm?: string | null;
   version: number;
   stage: Stage;
   run_id: string;
@@ -638,12 +671,20 @@ export interface ModelDetail {
 
 export interface EndpointRoute {
   model_version_id: string;
+  /** 0–100; routes must add up to 100 */
   weight: number;
+}
+
+export interface EndpointRouteOut extends EndpointRoute {
+  model_id: string;
+  version: number;
+  run_id?: string;
 }
 
 export interface EndpointCreate {
   name: string;
-  model_id: string;
+  /** give model_id (optionally version) or routes */
+  model_id?: string;
   version?: number;
   routes?: EndpointRoute[];
   min_replicas?: number;
@@ -652,28 +693,39 @@ export interface EndpointCreate {
 }
 
 export interface ServingEndpoint {
+  id: string;
   name: string;
-  model_id: string;
-  version?: number | null;
+  routes: EndpointRouteOut[];
+  min_replicas: number;
+  log_payloads: boolean;
+  cors_origins: string[];
+  status: string;
+  url: string;
+  created_at?: string;
+}
+
+export interface EndpointPatch {
   routes?: EndpointRoute[];
   min_replicas?: number;
   log_payloads?: boolean;
   cors_origins?: string[];
-  status?: string;
-  url?: string;
-  created_at?: string;
-  [key: string]: unknown;
+  status?: "active" | "paused";
 }
 
 export interface PredictResponse {
   predictions: JsonValue[];
   probabilities?: number[][] | null;
   classes?: JsonValue[] | null;
-  model_version: number | string;
+  /** the version that served the request (A/B routing) */
+  model_version: number | string | { model_id: string; version: number };
+  /** SHAP contributions per instance when `explain` is true */
+  shap?: Record<string, number>[] | null;
+  base_value?: number | number[] | null;
   explanations?: Record<string, number>[] | null;
 }
 
 export interface EndpointMetrics {
+  window_hours?: number;
   requests: number;
   errors: number;
   p50_ms: number | null;
@@ -748,6 +800,15 @@ export interface Analytic extends AnalyticCreate {
 export interface TabularResult {
   columns: string[];
   rows: unknown[][] | Row[];
+  truncated?: boolean;
+  /** Server-computed KPI / alert fields (widget data without custom SQL) */
+  value?: number | null;
+  sparkline?: [string, number][];
+  target?: number;
+  vs_target?: number | null;
+  status?: string | null;
+  static?: boolean;
+  cached?: boolean;
 }
 
 // -- Dashboards -------------------------------------------------------------------
@@ -772,7 +833,12 @@ export interface WidgetConfig {
   dataset_id?: string;
   sql?: string;
   chart?: ChartSpec;
-  kpi?: { value: string; target?: number | null; trend?: string | null };
+  /** trend = date column for the server-side sparkline (grain: day…year) */
+  kpi?: { value: string; aggregation?: "sum" | "avg" | "count" | "min" | "max" | "median"; target?: number | null; trend?: string | null; grain?: "day" | "week" | "month" | "quarter" | "year" };
+  /** table widgets without custom SQL */
+  columns?: string[];
+  sort?: { column: string; desc?: boolean };
+  page_size?: number;
   text?: string;
   image_url?: string;
   filter?: { column: string; kind: "dropdown" | "multiselect" | "slider" | "date"; dataset_id: string };
@@ -808,7 +874,7 @@ export type FilterValue = string | number | (string | number)[] | { min?: string
 export interface GlobalFilter {
   id: string;
   column: string;
-  kind: "dropdown" | "multiselect" | "slider" | "date" | "text";
+  kind: "dropdown" | "multiselect" | "slider" | "date";
   default: FilterValue | null;
 }
 
@@ -816,28 +882,28 @@ export interface DashboardSpec {
   pages: DashboardPage[];
   filters?: GlobalFilter[];
   date_range?: { column: string; default: string } | null;
-  theme?: { mode: "light" | "dark"; primary: string };
-  refresh_seconds?: number;
+  theme?: { mode: "light" | "dark"; primary?: string };
+  /** null = off; otherwise 5..86400 */
+  refresh_seconds?: number | null;
 }
 
 export interface Dashboard {
   id: string;
   name: string;
   spec: DashboardSpec;
-  archived?: boolean;
-  owner_id?: string;
-  created_by?: string;
+  archived: boolean;
+  owner_id: string;
+  /** user id (or "*") → editor | viewer */
+  shares: Record<string, string>;
+  your_role: "owner" | "editor" | "viewer" | string;
   created_at?: string;
   updated_at?: string;
-  role?: "owner" | "editor" | "viewer";
-  [key: string]: unknown;
 }
 
 export interface DashboardTemplate {
   id: string;
   name: string;
   description?: string;
-  spec: DashboardSpec;
 }
 
 // -- Webhooks -------------------------------------------------------------------
@@ -854,8 +920,8 @@ export interface WebhookDelivery {
   id: string;
   event: string;
   status: string;
-  status_code?: number | null;
+  response_code?: number | null;
   attempts?: number;
   created_at?: string;
-  error?: string | null;
+  delivered_at?: string | null;
 }

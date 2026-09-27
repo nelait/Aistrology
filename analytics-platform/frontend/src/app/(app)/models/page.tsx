@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
-import { Card, EmptyState, PageHeader, QueryState } from "@/components/ui";
+import { Badge, Card, EmptyState, PageHeader, QueryState } from "@/components/ui";
 
 export default function ModelsPage() {
   const q = useQuery({ queryKey: ["models"], queryFn: api.models.list });
@@ -22,7 +22,8 @@ export default function ModelsPage() {
                     </Link>
                     {m.description && <p className="truncate text-xs text-[var(--text-2)]">{m.description}</p>}
                   </div>
-                  {m.latest_version !== undefined && <span className="text-xs">latest v{m.latest_version}</span>}
+                  {m.production_version != null && <Badge tone="good">production v{m.production_version}</Badge>}
+                  {m.latest_version != null && <span className="text-xs">latest v{m.latest_version}</span>}
                   <span className="text-xs text-[var(--text-2)]">{formatDate(m.created_at)}</span>
                 </li>
               ))}

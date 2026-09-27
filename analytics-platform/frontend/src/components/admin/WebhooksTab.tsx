@@ -19,9 +19,9 @@ function Deliveries({ id }: { id: string }) {
             <li key={d.id} className="flex flex-wrap items-center gap-2">
               <StatusBadge status={d.status} />
               <span className="font-mono">{d.event}</span>
-              {d.status_code ? <Badge>{d.status_code}</Badge> : null}
+              {d.response_code ? <Badge>HTTP {d.response_code}</Badge> : null}
+              {d.attempts ? <span className="text-[var(--text-2)]">{d.attempts} attempt{d.attempts === 1 ? "" : "s"}</span> : null}
               <span className="text-[var(--text-2)]">{formatDate(d.created_at)}</span>
-              {d.error && <span className="text-red-700 dark:text-red-400">{d.error}</span>}
               {d.status !== "succeeded" && (
                 <Button size="sm" variant="ghost" onClick={() => retry.mutate(d.id)}>
                   Retry

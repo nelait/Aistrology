@@ -1,13 +1,15 @@
 "use client";
 import { useMemo, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 import type { EChartsOption } from "echarts";
 import type { Run } from "@/lib/types";
-import { axisStyle, barH, baseOption, heatmapOption, lineXY, scatterXY } from "@/lib/chartOptions";
+import { axisStyle, barH, baseOption, beeswarm, heatmapOption, lineXY, scatterXY } from "@/lib/chartOptions";
 import { formatNumber } from "@/lib/format";
 import { useTheme } from "@/lib/theme";
 import { EChart } from "../charts/EChart";
 import { DataGrid } from "../DataGrid";
-import { Card, SelectField } from "../ui";
+import { Button, Card, SelectField } from "../ui";
 
 function ChartCard({ title, option, height = 280, note }: { title: string; option: EChartsOption; height?: number; note?: string }) {
   return (
@@ -35,6 +37,7 @@ export function RunCharts({ run }: { run: Run }) {
   const pdpFeatures = Object.keys(a.pdp ?? {});
   const [pdpFeature, setPdpFeature] = useState(pdpFeatures[0] ?? "");
   const cm = useMemo(() => confusion(run), [run]);
+  const explain = useMutation({ mutationFn: () => api.training.explanationText(run.id), meta: { errorPrefix: "Explanation failed" } });
 
   const cards: React.ReactNode[] = [];
   if (cm) {
@@ -55,7 +58,7 @@ export function RunCharts({ run }: { run: Run }) {
     cards.push(
       <ChartCard
         key="roc"
-        title={`ROC curve${run.metrics.roc_auc !== undefined ? ` (AUC ${formatNumber(run.metrics.roc_auc)})` : a.roc_curve.auc ? ` (AUC ${formatNumber(a.roc_curve.auc)})` : ""}`}
+        title={`ROC curve${typeof run.metrics.roc_auc === "number" ? ` (AUC ${formatNumber(run.metrics.roc_auc)})` : a.roc_curve.auc ? ` (AUC ${formatNumber(a.roc_curve.auc)})` : ""}`}
         option={lineXY([{ name: "ROC", x: a.roc_curve.fpr, y: a.roc_curve.tpr, area: true }], { dark, xName: "False positive rate", yName: "True positive rate", xMax: 1, yMax: 1, diagonal: true })}
       />,
     );
@@ -63,7 +66,7 @@ export function RunCharts({ run }: { run: Run }) {
     cards.push(
       <ChartCard
         key="pr"
-        title={`Precision–recall${run.metrics.pr_auc !== undefined ? ` (AUC ${formatNumber(run.metrics.pr_auc)})` : ""}`}
+        title={`Precision–recall${typeof run.metrics.pr_auc === "number" ? ` (AUC ${formatNumber(run.metrics.pr_auc)})` : ""}`}
         option={lineXY([{ name: "PR", x: a.pr_curve.recall, y: a.pr_curve.precision, area: true }], { dark, xName: "Recall", yName: "Precision", xMax: 1, yMax: 1 })}
       />,
     );
@@ -128,6 +131,16 @@ export function RunCharts({ run }: { run: Run }) {
         option={barH(a.shap_summary.map((f) => ({ name: f.feature, value: f.mean_abs_shap })), { dark, name: "mean |SHAP value|" })}
       />,
     );
+  if (a.shap_beeswarm && Object.keys(a.shap_beeswarm).length)
+    cards.push(
+      <ChartCard
+        key="bee"
+        title="SHAP beeswarm"
+        note="Each dot is one test instance; color shows the feature value (blue = low, red = high)."
+        height={Math.min(560, 90 + Object.keys(a.shap_beeswarm).length * 34)}
+        option={beeswarm(a.shap_beeswarm, dark)}
+      />,
+    );
   if (pdpFeatures.length) {
     const f = a.pdp![pdpFeature] ?? a.pdp![pdpFeatures[0]];
     cards.push(
@@ -140,11 +153,22 @@ export function RunCharts({ run }: { run: Run }) {
 
   return (
     <div className="space-y-4">
-      {a.explanation_text && (
-        <Card title="Explanation">
-          <p className="text-sm">{a.explanation_text}</p>
-        </Card>
-      )}
+      <Card
+        title="Plain-English explanation"
+        actions={
+          !a.explanation_text && (
+            <Button size="sm" onClick={() => explain.mutate()} loading={explain.isPending}>
+              {explain.data ? "Regenerate" : "Explain this model"}
+            </Button>
+          )
+        }
+      >
+        {a.explanation_text || explain.data ? (
+          <div className="space-y-2 whitespace-pre-line text-sm">{a.explanation_text ?? explain.data?.text}</div>
+        ) : (
+          <p className="text-sm text-[var(--text-2)]">Generate a summary of what drives predictions, how accurate the model is and its caveats. Only aggregate explanations are sent to the LLM.</p>
+        )}
+      </Card>
       <div className="grid gap-4 lg:grid-cols-2">{cards}</div>
       {!cards.length && <p className="text-sm text-[var(--text-2)]">No evaluation artifacts for this run yet.</p>}
       {a.leaderboard?.length ? (

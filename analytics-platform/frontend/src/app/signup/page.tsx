@@ -25,7 +25,8 @@ export default function SignupPage() {
     if (!form.org_name.trim()) e.org_name = "Organization name is required";
     if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(form.tenant_id)) e.tenant_id = "3–63 lowercase letters, digits or dashes";
     if (!/^\S+@\S+\.\S+$/.test(form.email)) e.email = "Enter a valid email";
-    if (form.password.length < 12) e.password = "At least 12 characters";
+    if (form.password.length < 12 || !/[a-z]/.test(form.password) || !/[A-Z]/.test(form.password) || !/\d/.test(form.password))
+      e.password = "At least 12 characters, with upper- and lower-case letters and a digit";
     if (form.password !== form.confirm) e.confirm = "Passwords don't match";
     setErrors(e);
     return !Object.keys(e).length;
@@ -83,7 +84,7 @@ export default function SignupPage() {
         />
         <TextField label="Your name" autoComplete="name" value={form.name} onChange={(e) => set("name", e.target.value)} />
         <TextField label="Work email" type="email" autoComplete="email" required value={form.email} error={errors.email} onChange={(e) => set("email", e.target.value)} />
-        <TextField label="Password" type="password" autoComplete="new-password" required hint="At least 12 characters." value={form.password} error={errors.password} onChange={(e) => set("password", e.target.value)} />
+        <TextField label="Password" type="password" autoComplete="new-password" required hint="At least 12 characters, with upper- and lower-case letters and a digit." value={form.password} error={errors.password} onChange={(e) => set("password", e.target.value)} />
         <TextField label="Confirm password" type="password" autoComplete="new-password" required value={form.confirm} error={errors.confirm} onChange={(e) => set("confirm", e.target.value)} />
         {error && (
           <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">

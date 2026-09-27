@@ -4,12 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatDate } from "@/lib/format";
-import { Badge, Card, EmptyState, PageHeader, QueryState, StatusBadge } from "@/components/ui";
+import { Badge, Card, EmptyState, PageHeader, QueryState } from "@/components/ui";
 
 export default function ExperimentsPage() {
   const { can } = useAuth();
   const q = useQuery({ queryKey: ["experiments"], queryFn: api.training.list, refetchInterval: 10_000 });
-  const datasets = useQuery({ queryKey: ["datasets"], queryFn: api.datasets.list });
+  const datasets = useQuery({ queryKey: ["datasets"], queryFn: () => api.datasets.list() });
   return (
     <div className="space-y-5">
       <PageHeader
@@ -35,7 +35,7 @@ export default function ExperimentsPage() {
                     <th scope="col" className="px-4 py-2">Dataset</th>
                     <th scope="col" className="px-4 py-2">Target</th>
                     <th scope="col" className="px-4 py-2">Problem</th>
-                    <th scope="col" className="px-4 py-2">Status</th>
+                    <th scope="col" className="px-4 py-2">Algorithms</th>
                     <th scope="col" className="px-4 py-2">Created</th>
                   </tr>
                 </thead>
@@ -48,9 +48,11 @@ export default function ExperimentsPage() {
                         </Link>
                       </td>
                       <td className="px-4 py-2">{datasets.data?.find((d) => d.id === e.dataset_id)?.name ?? e.dataset_id}</td>
-                      <td className="px-4 py-2 font-mono text-xs">{e.target}</td>
-                      <td className="px-4 py-2">{e.problem_type ? <Badge>{e.problem_type}</Badge> : "—"}</td>
-                      <td className="px-4 py-2">{e.status ? <StatusBadge status={e.status} /> : "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{e.config.target ?? "—"}</td>
+                      <td className="px-4 py-2">
+                        <Badge>{e.config.problem_type ?? "auto-detect"}</Badge>
+                      </td>
+                      <td className="px-4 py-2 text-xs">{e.config.algorithms?.length ? e.config.algorithms.join(", ") : "AutoML (all suitable)"}</td>
                       <td className="px-4 py-2 text-xs">{formatDate(e.created_at)}</td>
                     </tr>
                   ))}

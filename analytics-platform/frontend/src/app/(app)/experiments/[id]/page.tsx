@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type Experiment, type ModelDetail, type RegisteredModel, type Run } from "@/lib/api";
+import { api, type Experiment, type Job, type Run } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatDuration, formatNumber } from "@/lib/format";
 import { useToast } from "@/lib/toast";
@@ -24,26 +24,36 @@ export default function ExperimentPage() {
     refetchInterval: (query) => {
       const d = query.state.data;
       if (!d) return false;
-      const running = ACTIVE.has(d.experiment.status ?? "") || d.runs.some((r) => ACTIVE.has(r.status));
+      const running = ACTIVE.has(d.job?.status ?? "") || d.runs.some((r) => ACTIVE.has(r.status));
       return running ? 3000 : false;
     },
   });
-  return <QueryState query={q}>{(d) => <ExperimentView experiment={d.experiment} runs={d.runs} />}</QueryState>;
+  return <QueryState query={q}>{(d) => <ExperimentView experiment={d.experiment} runs={d.runs} job={d.job} />}</QueryState>;
+}
+
+function numericMetricNames(runs: Run[]): string[] {
+  return Array.from(new Set(runs.flatMap((r) => Object.entries(r.metrics).filter(([, v]) => typeof v === "number").map(([k]) => k))));
+}
+
+function metric(r: Run, name: string): number | undefined {
+  const v = r.metrics[name];
+  return typeof v === "number" ? v : undefined;
 }
 
 function primaryMetric(runs: Run[], problem?: string | null): string | null {
-  const names = Array.from(new Set(runs.flatMap((r) => Object.keys(r.metrics))));
+  const names = numericMetricNames(runs);
   const pref = problem === "regression" ? ["rmse", "mae", "r2"] : ["roc_auc", "f1", "f1_macro", "accuracy"];
   return pref.find((p) => names.includes(p)) ?? names[0] ?? null;
 }
 
-function ExperimentView({ experiment, runs }: { experiment: Experiment; runs: Run[] }) {
+function ExperimentView({ experiment, runs, job }: { experiment: Experiment; runs: Run[]; job: Job | null }) {
   const { can } = useAuth();
   const router = useRouter();
   const qc = useQueryClient();
   const toast = useToast();
-  const metricNames = useMemo(() => Array.from(new Set(runs.flatMap((r) => Object.keys(r.metrics)))).slice(0, 8), [runs]);
-  const [sortBy, setSortBy] = useState<string | null>(primaryMetric(runs, experiment.problem_type));
+  const problemType = experiment.config.problem_type ?? (typeof runs[0]?.metrics.problem_type === "string" ? (runs[0].metrics.problem_type as string) : null);
+  const metricNames = useMemo(() => numericMetricNames(runs).slice(0, 8), [runs]);
+  const [sortBy, setSortBy] = useState<string | null>(primaryMetric(runs, problemType));
   const [selected, setSelected] = useState<string[]>([]);
   const [tab, setTab] = useState("leaderboard");
   const [runId, setRunId] = useState<string | null>(null);
@@ -54,10 +64,11 @@ function ExperimentView({ experiment, runs }: { experiment: Experiment; runs: Ru
   const sorted = useMemo(() => {
     if (!sortBy) return runs;
     const dir = LOWER_IS_BETTER.test(sortBy) ? 1 : -1;
-    return [...runs].sort((a, b) => ((a.metrics[sortBy] ?? (dir === 1 ? Infinity : -Infinity)) - (b.metrics[sortBy] ?? (dir === 1 ? Infinity : -Infinity))) * dir);
+    const fallback = dir === 1 ? Infinity : -Infinity;
+    return [...runs].sort((a, b) => ((metric(a, sortBy) ?? fallback) - (metric(b, sortBy) ?? fallback)) * dir);
   }, [runs, sortBy]);
 
-  const bestId = experiment.best_run_id ?? sorted.find((r) => r.status === "succeeded")?.id ?? sorted[0]?.id;
+  const bestId = runs.find((r) => r.artifacts?.is_best)?.id ?? sorted.find((r) => r.status === "succeeded")?.id ?? sorted[0]?.id;
   const activeRunId = runId ?? bestId ?? null;
   const run = useQuery({ queryKey: ["run", activeRunId], queryFn: () => api.training.run(activeRunId!), enabled: !!activeRunId && (tab === "run" || tab === "whatif") });
 
@@ -67,8 +78,8 @@ function ExperimentView({ experiment, runs }: { experiment: Experiment; runs: Ru
       toast.success("Model registered");
       setRegisterOpen(false);
       qc.invalidateQueries({ queryKey: ["models"] });
-      const modelId = (r as ModelDetail).model?.id ?? (r as RegisteredModel).id;
-      router.push(`/models/${modelId}`);
+      toast.success(`${r.name} v${r.version} registered`);
+      router.push(`/models/${r.model_id}`);
     },
   });
 
@@ -90,13 +101,13 @@ function ExperimentView({ experiment, runs }: { experiment: Experiment; runs: Ru
         }
         title={
           <span className="flex flex-wrap items-center gap-2">
-            {experiment.name} {experiment.status && <StatusBadge status={experiment.status} />}
+            {experiment.name} {job && <StatusBadge status={job.status} />}
           </span>
         }
         description={
           <>
-            Target <span className="font-mono">{experiment.target}</span>
-            {experiment.problem_type ? ` · ${experiment.problem_type}` : ""} · dataset{" "}
+            Target <span className="font-mono">{experiment.config.target}</span>
+            {problemType ? ` · ${problemType}` : ""} · dataset{" "}
             <Link href={`/datasets/${experiment.dataset_id}`} className="underline">
               {experiment.dataset_id}
             </Link>
@@ -112,7 +123,19 @@ function ExperimentView({ experiment, runs }: { experiment: Experiment; runs: Ru
           )
         }
       />
-      {experiment.job_id && ACTIVE.has(experiment.status ?? "") && <JobProgress jobId={experiment.job_id} title="Training" onDone={() => qc.invalidateQueries({ queryKey: ["experiment", experiment.id] })} />}
+      {job && ACTIVE.has(job.status) && <JobProgress jobId={job.id} title="Training" onDone={() => qc.invalidateQueries({ queryKey: ["experiment", experiment.id] })} />}
+      {job?.status === "failed" && (
+        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">
+          Training failed: {job.error ?? "unknown error"}
+        </p>
+      )}
+      {runs[0]?.artifacts?.warnings?.length ? (
+        <ul className="rounded-md bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          {runs[0].artifacts.warnings.map((w, i) => (
+            <li key={i}>⚠ {w}</li>
+          ))}
+        </ul>
+      ) : null}
 
       <Tabs
         label="Experiment sections"
@@ -169,7 +192,7 @@ function ExperimentView({ experiment, runs }: { experiment: Experiment; runs: Ru
                       </td>
                       {metricNames.map((m) => (
                         <td key={m} className="px-3 py-2 tabular-nums">
-                          {formatNumber(r.metrics[m], 4)}
+                          {formatNumber(metric(r, m), 4)}
                         </td>
                       ))}
                       <td className="px-3 py-2">{formatDuration(r.duration_seconds)}</td>
@@ -200,7 +223,7 @@ function ExperimentView({ experiment, runs }: { experiment: Experiment; runs: Ru
                     items={[
                       ["Status", <StatusBadge key="s" status={r.status} />],
                       ["Duration", formatDuration(r.duration_seconds)],
-                      ...Object.entries(r.metrics).map(([k, v]) => [k, formatNumber(v, 4)] as [string, string]),
+                      ...Object.entries(r.metrics).map(([k, v]) => [k, typeof v === "number" ? formatNumber(v, 4) : String(v)] as [string, string]),
                       ["Parameters", <code key="p" className="font-mono text-xs">{JSON.stringify(r.params)}</code>],
                     ]}
                   />

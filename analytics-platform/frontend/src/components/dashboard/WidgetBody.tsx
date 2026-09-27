@@ -5,7 +5,7 @@ import type { EChartsType } from "echarts/core";
 import { api, type FilterValue, type TabularResult, type Widget } from "@/lib/api";
 import { sparkline, STATUS } from "@/lib/chartOptions";
 import { columnsOf, toNumber, toRecords } from "@/lib/data";
-import { evaluateThresholds, ragOf } from "@/lib/dashboard";
+import { autoSql, evaluateThresholds, ragOf } from "@/lib/dashboard";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { coerce } from "@/lib/signature";
 import { quoteIdent } from "@/lib/sql";
@@ -15,6 +15,7 @@ import { EChart } from "../charts/EChart";
 import { DataGrid } from "../DataGrid";
 import { Markdown } from "../Markdown";
 import { useEndpointFields } from "../useEndpointFields";
+import { SignatureInput } from "../SignatureInput";
 import { Button, SelectField, Spinner, TextField } from "../ui";
 
 export interface WidgetDataArgs {
@@ -30,8 +31,19 @@ export interface WidgetDataArgs {
 async function previewData(widget: Widget): Promise<TabularResult> {
   const c = widget.config;
   if (c.analytic_id) return api.analytics.run(c.analytic_id, {});
-  if (c.dataset_id && c.sql) return api.datasets.query(c.dataset_id, c.sql, 5000);
+  const sql = c.sql || autoSql(widget);
+  if (c.dataset_id && sql) {
+    const r = await api.datasets.query(c.dataset_id, sql, 5000);
+    // mimic the server's KPI shape
+    if ((widget.type === "kpi" || widget.type === "alert") && !c.sql) return { ...r, value: toNumber(r.rows[0]?.[0]) };
+    return r;
+  }
   return { columns: [], rows: [] };
+}
+
+function hasSource(w: Widget): boolean {
+  const c = w.config;
+  return !!(c.analytic_id || (c.dataset_id && (c.sql || autoSql(w))));
 }
 
 export function needsData(w: Widget): boolean {
@@ -39,11 +51,10 @@ export function needsData(w: Widget): boolean {
 }
 
 export function useWidgetData({ dashboardId, widget, saved, filters, refreshMs, enabled }: WidgetDataArgs) {
-  const hasSource = !!(widget.config.analytic_id || (widget.config.dataset_id && widget.config.sql));
   return useQuery({
-    queryKey: saved ? ["widget-data", dashboardId, widget.id, filters] : ["widget-preview", widget.id, widget.config.analytic_id, widget.config.dataset_id, widget.config.sql],
+    queryKey: saved ? ["widget-data", dashboardId, widget.id, filters] : ["widget-preview", widget.id, JSON.stringify(widget.config)],
     queryFn: ({ signal }) => (saved ? api.dashboards.widgetData(dashboardId, widget.id, filters, signal) : previewData(widget)),
-    enabled: enabled && needsData(widget) && hasSource,
+    enabled: enabled && needsData(widget) && hasSource(widget),
     refetchInterval: refreshMs > 0 ? refreshMs : false,
     placeholderData: (prev) => prev,
     meta: { errorPrefix: widget.title },
@@ -57,17 +68,19 @@ function Kpi({ widget, result }: { widget: Widget; result: TabularResult }) {
   const rows = toRecords(result);
   const cols = columnsOf(rows, result.columns);
   const valueCol = widget.config.kpi?.value || cols.find((c) => toNumber(rows[0]?.[c]) !== null) || cols[0];
+  const server = result.value !== undefined;
   const values = rows.map((r) => toNumber(r[valueCol])).filter((v): v is number => v !== null);
-  const value = values.length === 1 ? values[0] : values.length ? values.reduce((a, b) => a + b, 0) : null;
-  const trendCol = widget.config.kpi?.trend;
-  const trend = trendCol ? rows.map((r) => toNumber(r[trendCol])).filter((v): v is number => v !== null) : [];
-  const target = widget.config.kpi?.target;
-  const delta = value !== null && target ? (value - target) / Math.abs(target) : null;
+  const value = server ? toNumber(result.value) : values.length === 1 ? values[0] : values.length ? values.reduce((a, b) => a + b, 0) : null;
+  // Server KPIs return a sparkline of [period, value]; custom SQL KPIs draw the value column over the rows.
+  const trend = server ? (result.sparkline ?? []).map((p) => toNumber(p[1])).filter((v): v is number => v !== null) : values.length > 1 ? values : [];
+  const trendCol = widget.config.kpi?.trend ?? valueCol;
+  const target = result.target ?? widget.config.kpi?.target;
+  const delta = result.vs_target !== undefined && result.vs_target !== null ? result.vs_target : value !== null && target ? (value - target) / Math.abs(target) : null;
   const change = trend.length >= 2 && trend[trend.length - 2] ? (trend[trend.length - 1] - trend[trend.length - 2]) / Math.abs(trend[trend.length - 2]) : null;
   return (
     <div className="flex h-full flex-col justify-center gap-1">
       <p className="text-3xl font-semibold tabular-nums">{formatNumber(value)}</p>
-      <p className="text-xs text-[var(--text-2)]">{valueCol}</p>
+      <p className="text-xs text-[var(--text-2)]">{server ? `${widget.config.kpi?.aggregation ?? "sum"} of ${widget.config.kpi?.value}` : valueCol}</p>
       <div className="flex flex-wrap gap-3 text-xs">
         {change !== null && (
           <span className={change >= 0 ? "text-green-800 dark:text-green-300" : "text-red-700 dark:text-red-400"}>
@@ -102,9 +115,9 @@ function Alert({ widget, result }: { widget: Widget; result: TabularResult }) {
   const rows = toRecords(result);
   const cols = columnsOf(rows, result.columns);
   const col = widget.config.value_column || widget.config.kpi?.value || cols.find((c) => toNumber(rows[0]?.[c]) !== null) || cols[0];
-  const value = toNumber(rows[0]?.[col]);
+  const value = result.value !== undefined ? toNumber(result.value) : toNumber(rows[0]?.[col]);
   const hit = evaluateThresholds(value, widget.config.thresholds);
-  const rag = hit ? ragOf(hit.color) : null;
+  const rag = hit ? ragOf(hit.color) : result.status ? ragOf(result.status) : null;
   const style = rag ? RAG_STYLE[rag] : null;
   return (
     <div className="flex h-full items-center gap-3" role="status">
@@ -212,7 +225,7 @@ function Prediction({ widget }: { widget: Widget }) {
   });
   if (!endpoint) return <p className="text-sm text-[var(--text-2)]">Choose an endpoint in the widget settings.</p>;
   if (loading) return <Spinner />;
-  const expl = predict.data?.explanations?.[0];
+  const expl = predict.data?.shap?.[0] ?? predict.data?.explanations?.[0];
   return (
     <form
       className="flex h-full flex-col gap-2 overflow-auto"
@@ -223,7 +236,7 @@ function Prediction({ widget }: { widget: Widget }) {
     >
       <div className="grid gap-2 sm:grid-cols-2">
         {fields.map((f) => (
-          <TextField key={f.name} label={f.name} type={/(int|float|number|double)/i.test(f.type) ? "number" : "text"} step="any" value={values[f.name] ?? ""} onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))} />
+          <SignatureInput key={f.name} field={f} value={values[f.name] ?? ""} onChange={(v) => setValues((x) => ({ ...x, [f.name]: v }))} />
         ))}
       </div>
       <Button type="submit" size="sm" variant="primary" loading={predict.isPending} className="self-start">
@@ -295,8 +308,7 @@ export function WidgetBody(props: WidgetBodyProps) {
       break;
   }
 
-  if (!widget.config.analytic_id && !(widget.config.dataset_id && widget.config.sql))
-    return <p className="text-sm text-[var(--text-2)]">Choose a data source in the widget settings.</p>;
+  if (!hasSource(widget)) return <p className="text-sm text-[var(--text-2)]">Choose a data source and fields in the widget settings.</p>;
   if (q.isLoading) return <Spinner label="Loading data…" />;
   if (q.isError) return <p role="alert" className="text-sm text-red-700 dark:text-red-400">{q.error instanceof Error ? q.error.message : "Failed to load"}</p>;
   if (!result) return null;

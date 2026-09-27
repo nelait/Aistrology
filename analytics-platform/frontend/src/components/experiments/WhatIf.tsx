@@ -13,9 +13,9 @@ export function WhatIf({ run, experiment }: { run: Run; experiment: Experiment }
   const { dark } = useTheme();
   const profile = useQuery({ queryKey: ["profile", experiment.dataset_id, "latest"], queryFn: () => api.datasets.profile(experiment.dataset_id), meta: { silent: true } });
   const features = useMemo(() => {
-    if (experiment.features?.length) return experiment.features;
+    if (experiment.config.features?.length) return experiment.config.features;
     const fromArtifacts = run.artifacts.feature_importance?.map((f) => f.feature) ?? [];
-    return fromArtifacts.length ? fromArtifacts : (profile.data?.columns.map((c) => c.name).filter((c) => c !== experiment.target) ?? []);
+    return fromArtifacts.length ? fromArtifacts : (profile.data?.columns.map((c) => c.name).filter((c) => c !== experiment.config.target) ?? []);
   }, [experiment, run, profile.data]);
   const [values, setValues] = useState<Record<string, string>>({});
 

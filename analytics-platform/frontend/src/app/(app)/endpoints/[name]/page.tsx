@@ -9,11 +9,12 @@ import { saveBlob } from "@/lib/data";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { coerce } from "@/lib/signature";
 import { useEndpointFields } from "@/components/useEndpointFields";
+import { SignatureInput } from "@/components/SignatureInput";
 import { useToast } from "@/lib/toast";
 import { DeployForm } from "@/components/DeployForm";
 import { FileDrop } from "@/components/FileDrop";
 import { JobProgress } from "@/components/JobProgress";
-import { Badge, Button, Card, Checkbox, CodeBlock, ConfirmDialog, KeyValue, Modal, PageHeader, QueryState, SelectField, StatTile, TabPanel, Tabs, TextArea, TextField } from "@/components/ui";
+import { Badge, Button, Card, Checkbox, CodeBlock, ConfirmDialog, KeyValue, Modal, PageHeader, QueryState, SelectField, StatTile, TabPanel, Tabs, TextArea } from "@/components/ui";
 
 export default function EndpointPage() {
   const { name } = useParams<{ name: string }>();
@@ -51,6 +52,13 @@ function EndpointView({ endpoint }: { endpoint: ServingEndpoint }) {
       router.push("/endpoints");
     },
   });
+  const pause = useMutation({
+    mutationFn: () => api.endpoints.patch(endpoint.name, { status: endpoint.status === "paused" ? "active" : "paused" }),
+    onSuccess: (e) => {
+      qc.setQueryData(["endpoint", endpoint.name], e);
+      toast.success(`Endpoint ${e.status}`);
+    },
+  });
   const code = snippets(endpoint.name, fields);
   const openapiDownload = async () => {
     try {
@@ -75,16 +83,24 @@ function EndpointView({ endpoint }: { endpoint: ServingEndpoint }) {
         title={<span className="font-mono">{endpoint.name}</span>}
         description={
           <>
-            Model{" "}
-            <Link href={`/models/${endpoint.model_id}`} className="underline">
-              {endpoint.model_id}
-            </Link>
-            {endpoint.version ? ` v${endpoint.version}` : " (production stage)"}
+            {endpoint.routes.map((r, i) => (
+              <span key={r.model_version_id}>
+                {i > 0 && " · "}
+                <Link href={`/models/${r.model_id}`} className="underline">
+                  {r.model_id.slice(0, 8)} v{r.version}
+                </Link>
+                {endpoint.routes.length > 1 && ` (${r.weight}%)`}
+              </span>
+            ))}{" "}
+            · <Badge tone={endpoint.status === "active" ? "good" : "warning"}>{endpoint.status}</Badge>
           </>
         }
         actions={
           can("endpoints.deploy") && (
             <>
+              <Button onClick={() => pause.mutate()} loading={pause.isPending}>
+                {endpoint.status === "paused" ? "Resume" : "Pause"}
+              </Button>
               <Button onClick={() => setEditOpen(true)}>Edit routes &amp; settings</Button>
               <Button variant="danger" onClick={() => setDeleteOpen(true)}>
                 Delete
@@ -111,7 +127,7 @@ function EndpointView({ endpoint }: { endpoint: ServingEndpoint }) {
               {(m) => (
                 <>
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-                    <StatTile label="Requests" value={formatNumber(m.requests)} />
+                    <StatTile label="Requests" value={formatNumber(m.requests)} sub={m.window_hours ? `last ${m.window_hours} h` : undefined} />
                     <StatTile label="Error rate" value={m.requests ? formatPercent(m.errors / m.requests) : "—"} sub={`${formatNumber(m.errors)} errors`} tone={m.requests && m.errors / m.requests > 0.05 ? "critical" : undefined} />
                     <StatTile label="p50 latency" value={m.p50_ms !== null ? `${formatNumber(m.p50_ms)} ms` : "—"} />
                     <StatTile label="p95 latency" value={m.p95_ms !== null ? `${formatNumber(m.p95_ms)} ms` : "—"} />
@@ -151,7 +167,8 @@ function EndpointView({ endpoint }: { endpoint: ServingEndpoint }) {
             <Card title="Configuration">
               <KeyValue
                 items={[
-                  ["Routes", endpoint.routes?.length ? endpoint.routes.map((r) => `${r.model_version_id} (${r.weight})`).join(", ") : "Single version"],
+                  ["URL", <code key="u" className="break-all font-mono text-xs">{endpoint.url}</code>],
+                  ["Routes", endpoint.routes.map((r) => `v${r.version} (${r.weight}%)`).join(", ")],
                   ["Min replicas", String(endpoint.min_replicas ?? "—")],
                   ["Payload logging", endpoint.log_payloads ? "On (PII redacted)" : "Off"],
                   ["CORS origins", endpoint.cors_origins?.join(", ") || "—"],
@@ -240,20 +257,9 @@ function TryIt({ name, fields }: { name: string; fields: SignatureField[] }) {
       >
         {fields.length ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {fields.map((f) =>
-              /bool/i.test(f.type) ? (
-                <SelectField key={f.name} label={`${f.name} (${f.type})`} value={values[f.name] ?? ""} onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))} options={[{ value: "true", label: "true" }, { value: "false", label: "false" }]} placeholder="(null)" />
-              ) : (
-                <TextField
-                  key={f.name}
-                  label={`${f.name} (${f.type})`}
-                  type={/(int|float|number|double)/i.test(f.type) ? "number" : /date/i.test(f.type) ? "date" : "text"}
-                  step="any"
-                  value={values[f.name] ?? ""}
-                  onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                />
-              ),
-            )}
+            {fields.map((f) => (
+              <SignatureInput key={f.name} field={f} value={values[f.name] ?? ""} onChange={(v) => setValues((x) => ({ ...x, [f.name]: v }))} />
+            ))}
           </div>
         ) : (
           <TextArea label="Request body (JSON)" hint="No model signature found; write the instances by hand." mono rows={8} value={raw} onChange={(e) => setRaw(e.target.value)} />
@@ -266,7 +272,8 @@ function TryIt({ name, fields }: { name: string; fields: SignatureField[] }) {
       {r && (
         <div className="mt-4 space-y-2" aria-live="polite">
           <p>
-            Prediction: <strong>{String(r.predictions[0])}</strong> <Badge>model v{String(r.model_version)}</Badge>
+            Prediction: <strong>{String(r.predictions[0])}</strong>{" "}
+            <Badge>model v{typeof r.model_version === "object" ? r.model_version.version : String(r.model_version)}</Badge>
           </p>
           {r.probabilities?.[0] && (
             <ul className="text-sm">
@@ -276,6 +283,21 @@ function TryIt({ name, fields }: { name: string; fields: SignatureField[] }) {
                 </li>
               ))}
             </ul>
+          )}
+          {r.shap?.[0] && (
+            <div>
+              <p className="text-sm font-medium">Top contributions (SHAP)</p>
+              <ul className="text-sm">
+                {Object.entries(r.shap[0])
+                  .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+                  .slice(0, 8)
+                  .map(([k, v]) => (
+                    <li key={k} className="tabular-nums">
+                      {k}: <span className={v >= 0 ? "text-brand-700 dark:text-brand-300" : "text-red-700 dark:text-red-400"}>{v >= 0 ? "+" : ""}{formatNumber(v)}</span>
+                    </li>
+                  ))}
+              </ul>
+            </div>
           )}
           <details>
             <summary className="cursor-pointer text-sm">Raw response</summary>
@@ -292,7 +314,7 @@ function Batch({ name }: { name: string }) {
   const [job, setJob] = useState<Job | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [datasetId, setDatasetId] = useState("");
-  const datasets = useQuery({ queryKey: ["datasets"], queryFn: api.datasets.list });
+  const datasets = useQuery({ queryKey: ["datasets"], queryFn: () => api.datasets.list() });
   const upload = useMutation({
     mutationFn: (file: File) => api.endpoints.batchFile(name, file, (p) => setProgress(p.total ? p.loaded / p.total : null)),
     meta: { errorPrefix: "Batch upload failed" },

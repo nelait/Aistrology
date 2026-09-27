@@ -1,6 +1,7 @@
 /** Dashboard spec helpers (DSH-*, WDG-*, WCFG-*). */
 import type { DashboardPage, DashboardSpec, DatasetRecord, FilterValue, Threshold, Widget, WidgetType } from "./types";
 import { uid } from "./data";
+import { generateSql, quoteIdent, type BuilderAggregation } from "./sql";
 
 export const REFRESH_OPTIONS: { value: number; label: string }[] = [
   { value: 0, label: "Off" },
@@ -51,8 +52,32 @@ export function emptySpec(): DashboardSpec {
     filters: [],
     date_range: null,
     theme: { mode: "light", primary: "#2a78d6" },
-    refresh_seconds: 0,
+    refresh_seconds: null,
   };
+}
+
+/**
+ * SQL equivalent of the server-side query for widgets configured with a dataset but no custom SQL. Used
+ * only for unsaved previews; saved widgets get their data from the widget-data endpoint.
+ */
+export function autoSql(w: Widget): string | null {
+  const c = w.config;
+  if (w.type === "chart" && c.chart) {
+    const dims = [c.chart.x, c.chart.series].filter((x): x is string => !!x);
+    const agg = (c.chart.aggregation ?? (c.chart.y ? "sum" : "count")) as BuilderAggregation;
+    return generateSql({ dimensions: dims, measures: [{ column: c.chart.y && agg !== "count" ? c.chart.y : "*", aggregation: c.chart.y && agg === "count" ? "count" : agg, alias: c.chart.y ?? "count" }], filters: [], limit: 5000 });
+  }
+  if ((w.type === "kpi" || w.type === "alert") && c.kpi) {
+    const agg = c.kpi.aggregation ?? "sum";
+    const measure = agg === "count" ? "COUNT(*)" : `${agg.toUpperCase()}(${quoteIdent(c.kpi.value)})`;
+    return `SELECT ${measure} AS value FROM data`;
+  }
+  if (w.type === "table") {
+    const cols = c.columns?.length ? c.columns.map(quoteIdent).join(", ") : "*";
+    const order = c.sort?.column ? ` ORDER BY ${quoteIdent(c.sort.column)} ${c.sort.desc ? "DESC" : "ASC"}` : "";
+    return `SELECT ${cols} FROM data${order} LIMIT ${c.page_size ?? 500}`;
+  }
+  return null;
 }
 
 /** Fill in missing optional parts of a spec coming from the API. */

@@ -724,3 +724,66 @@ export function sparkline(values: number[], dark: boolean): EChartsOption {
 }
 
 export { axisStyle, base as baseOption, ink };
+
+/**
+ * SHAP beeswarm (XAI-002): one row per feature, each dot an instance's SHAP value, colored by the
+ * feature's value (low → blue, high → red, non-numeric → gray).
+ */
+export function beeswarm(data: Record<string, { shap: number[]; value: unknown[] }>, dark: boolean): EChartsOption {
+  const ax = axisStyle(dark);
+  const t = ink(dark);
+  const features = Object.keys(data).sort((a, b) => {
+    const m = (f: string) => data[f].shap.reduce((s, v) => s + Math.abs(v), 0) / Math.max(1, data[f].shap.length);
+    return m(a) - m(b); // most important ends up on top
+  });
+  const points: [number, number, number | null, string][] = [];
+  features.forEach((f, fi) => {
+    const nums = data[f].value.map((v) => toNumber(v));
+    const finite = nums.filter((v): v is number => v !== null);
+    const lo = finite.length ? Math.min(...finite) : 0;
+    const hi = finite.length ? Math.max(...finite) : 1;
+    data[f].shap.forEach((s, i) => {
+      const jitter = (((i * 2654435761) % 1000) / 1000 - 0.5) * 0.6; // deterministic spread
+      const n = nums[i];
+      points.push([s, fi + jitter, n === null || hi === lo ? null : (n - lo) / (hi - lo), f]);
+    });
+  });
+  return {
+    ...base(dark),
+    grid: { left: 8, right: 24, top: 8, bottom: 56, containLabel: true },
+    tooltip: {
+      trigger: "item",
+      confine: true,
+      formatter: (p: unknown) => {
+        const d = (p as { data: [number, number, number | null, string] }).data;
+        return `${d[3]}: SHAP ${Number(d[0].toPrecision(3))}`;
+      },
+    },
+    xAxis: { type: "value", name: "SHAP value (impact on model output)", nameLocation: "middle", nameGap: 24, ...ax },
+    yAxis: {
+      type: "value",
+      min: -0.5,
+      max: features.length - 0.5,
+      interval: 1,
+      ...ax,
+      splitLine: { show: false },
+      axisLabel: { color: t.secondary, formatter: (v: number) => features[Math.round(v)] ?? "" },
+    },
+    visualMap: {
+      type: "continuous",
+      dimension: 2,
+      min: 0,
+      max: 1,
+      orient: "horizontal",
+      left: "center",
+      bottom: 0,
+      itemHeight: 100,
+      text: ["high", "low"],
+      textStyle: { color: t.secondary },
+      inRange: { color: dark ? ["#3987e5", "#383835", "#e66767"] : ["#2a78d6", "#d9d8d4", "#e34948"] },
+      outOfRange: { color: t.muted },
+      calculable: false,
+    },
+    series: [{ type: "scatter", symbolSize: 6, data: points, itemStyle: { opacity: 0.8 } }],
+  };
+}

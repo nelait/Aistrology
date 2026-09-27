@@ -36,7 +36,7 @@ export function AnalyticEditor({ draft }: { draft: AnalyticDraft }) {
   const [chart, setChart] = useState<ChartSpec>(draft.chart ?? { type: "bar" });
   const [params, setParams] = useState<AnalyticParameter[]>(draft.parameters ?? []);
 
-  const datasets = useQuery({ queryKey: ["datasets"], queryFn: api.datasets.list });
+  const datasets = useQuery({ queryKey: ["datasets"], queryFn: () => api.datasets.list() });
   const dataset = datasets.data?.find((d) => d.id === datasetId);
   const columns = useMemo(() => schemaColumns(dataset?.schema), [dataset]);
 

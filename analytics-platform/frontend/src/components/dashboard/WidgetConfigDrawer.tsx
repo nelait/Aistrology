@@ -6,9 +6,11 @@ import { schemaColumns } from "@/lib/data";
 import { ChartConfig } from "../analytics/ChartConfig";
 import { Markdown } from "../Markdown";
 import { SqlEditor } from "../SqlEditor";
-import { Button, Modal, SelectField, TextArea, TextField, toOptions } from "../ui";
+import { Button, Modal, MultiSelect, SelectField, TextArea, TextField, toOptions } from "../ui";
 
 const OPS: Threshold["op"][] = [">", ">=", "<", "<=", "==", "!="];
+/** the server evaluates alert thresholds with these operators */
+const THRESHOLD_OPS: Threshold["op"][] = [">", ">=", "<", "<=", "=="];
 const COLORS = [
   { value: "red", label: "Red (critical)" },
   { value: "amber", label: "Amber (warning)" },
@@ -17,7 +19,7 @@ const COLORS = [
 
 /** Per-widget configuration (WCFG-001, WCFG-003). */
 export function WidgetConfigDrawer({ widget, onChange, onClose }: { widget: Widget | null; onChange: (w: Widget) => void; onClose: () => void }) {
-  const datasets = useQuery({ queryKey: ["datasets"], queryFn: api.datasets.list });
+  const datasets = useQuery({ queryKey: ["datasets"], queryFn: () => api.datasets.list() });
   const analytics = useQuery({ queryKey: ["analytics"], queryFn: api.analytics.list });
   const endpoints = useQuery({ queryKey: ["endpoints"], queryFn: api.endpoints.list, enabled: widget?.type === "prediction", meta: { silent: true } });
 
@@ -28,8 +30,9 @@ export function WidgetConfigDrawer({ widget, onChange, onClose }: { widget: Widg
 
   if (!widget) return <Modal open={false} onClose={onClose} title="" side>{null}</Modal>;
   const set = (patch: Partial<WidgetConfig>) => onChange({ ...widget, config: { ...widget.config, ...patch } });
+  const setKpi = (patch: Partial<NonNullable<WidgetConfig["kpi"]>>) => set({ kpi: { value: c.kpi?.value ?? "", ...c.kpi, ...patch } });
   const needsSource = ["chart", "kpi", "table", "alert"].includes(widget.type);
-  const sourceKind = c.analytic_id ? "analytic" : "sql";
+  const sourceKind = c.analytic_id ? "analytic" : c.sql !== undefined ? "sql" : "auto";
 
   return (
     <Modal open={!!widget} onClose={onClose} title={`Configure ${widget.type} widget`} side footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
@@ -42,10 +45,17 @@ export function WidgetConfigDrawer({ widget, onChange, onClose }: { widget: Widg
             <SelectField
               label="Source"
               value={sourceKind}
-              onChange={(e) => (e.target.value === "analytic" ? set({ sql: undefined, analytic_id: analytics.data?.[0]?.id }) : set({ analytic_id: undefined, sql: c.sql ?? "SELECT *\nFROM data\nLIMIT 100" }))}
+              onChange={(e) =>
+                e.target.value === "analytic"
+                  ? set({ sql: undefined, analytic_id: analytics.data?.[0]?.id })
+                  : e.target.value === "sql"
+                    ? set({ analytic_id: undefined, sql: c.sql ?? "SELECT *\nFROM data\nLIMIT 100" })
+                    : set({ analytic_id: undefined, sql: undefined })
+              }
               options={[
+                { value: "auto", label: "Dataset (query built from the fields below)" },
+                { value: "sql", label: "Dataset + custom SQL" },
                 { value: "analytic", label: "Saved analytic" },
-                { value: "sql", label: "Dataset + SQL" },
               ]}
             />
             {sourceKind === "analytic" ? (
@@ -62,7 +72,7 @@ export function WidgetConfigDrawer({ widget, onChange, onClose }: { widget: Widg
             ) : (
               <>
                 <SelectField label="Dataset" value={c.dataset_id ?? ""} onChange={(e) => set({ dataset_id: e.target.value || undefined })} options={(datasets.data ?? []).map((d) => ({ value: d.id, label: d.name }))} placeholder="Choose…" />
-                {c.dataset_id && <SqlEditor value={c.sql ?? ""} onChange={(sql) => set({ sql })} columns={columns} height={160} label="Widget SQL" />}
+                {c.dataset_id && sourceKind === "sql" && <SqlEditor value={c.sql ?? ""} onChange={(sql) => set({ sql })} columns={columns} height={160} label="Widget SQL" />}
               </>
             )}
             <p className="text-xs text-[var(--text-2)]">Global filters and cross-filters are applied server-side to columns with matching names.</p>
@@ -71,11 +81,48 @@ export function WidgetConfigDrawer({ widget, onChange, onClose }: { widget: Widg
 
         {widget.type === "chart" && <ChartConfig spec={c.chart ?? { type: "bar" }} onChange={(chart) => set({ chart })} columns={colNames} />}
 
-        {widget.type === "kpi" && (
+        {(widget.type === "kpi" || widget.type === "alert") && (
+          <div className="grid grid-cols-2 gap-2">
+            <SelectField className="col-span-2" label="Value column" value={c.kpi?.value ?? ""} onChange={(e) => setKpi({ value: e.target.value })} options={toOptions(colNames)} placeholder={sourceKind === "auto" ? "Choose…" : "(first numeric)"} />
+            {sourceKind === "auto" && (
+              <SelectField label="Aggregation" value={c.kpi?.aggregation ?? "sum"} onChange={(e) => setKpi({ aggregation: e.target.value as "sum" })} options={toOptions(["sum", "avg", "count", "min", "max", "median"])} />
+            )}
+            {widget.type === "kpi" && (
+              <TextField label="Target" type="number" value={c.kpi?.target ?? ""} onChange={(e) => setKpi({ target: e.target.value === "" ? null : Number(e.target.value) })} />
+            )}
+            {widget.type === "kpi" && sourceKind === "auto" && (
+              <>
+                <SelectField
+                  label="Trend date column"
+                  value={c.kpi?.trend ?? ""}
+                  onChange={(e) => setKpi({ trend: e.target.value || null })}
+                  options={toOptions(columns.filter((x) => x.type === "date" || x.type === "datetime").map((x) => x.name))}
+                  placeholder="(no sparkline)"
+                />
+                <SelectField label="Trend grain" value={c.kpi?.grain ?? "month"} disabled={!c.kpi?.trend} onChange={(e) => setKpi({ grain: e.target.value as "month" })} options={toOptions(["day", "week", "month", "quarter", "year"])} />
+              </>
+            )}
+            {widget.type === "kpi" && sourceKind !== "auto" && <p className="col-span-2 text-xs text-[var(--text-2)]">With custom SQL or an analytic, multiple rows are drawn as a sparkline of the value column.</p>}
+          </div>
+        )}
+
+        {widget.type === "table" && sourceKind === "auto" && (
           <div className="grid gap-2">
-            <SelectField label="Value column" value={c.kpi?.value ?? ""} onChange={(e) => set({ kpi: { ...c.kpi, value: e.target.value } })} options={toOptions(colNames)} placeholder="(first numeric)" />
-            <TextField label="Target" type="number" value={c.kpi?.target ?? ""} onChange={(e) => set({ kpi: { value: c.kpi?.value ?? "", ...c.kpi, target: e.target.value === "" ? null : Number(e.target.value) } })} />
-            <SelectField label="Trend (sparkline) column" value={c.kpi?.trend ?? ""} onChange={(e) => set({ kpi: { value: c.kpi?.value ?? "", ...c.kpi, trend: e.target.value || null } })} options={toOptions(colNames)} placeholder="(none)" hint="Rows ordered by time; last two points give the change." />
+            <MultiSelect label="Columns" hint="Empty = all" options={toOptions(colNames)} value={c.columns ?? []} onChange={(v) => set({ columns: v.length ? v : undefined })} maxHeight={140} ordered />
+            <div className="grid grid-cols-3 gap-2">
+              <SelectField label="Sort by" value={c.sort?.column ?? ""} onChange={(e) => set({ sort: e.target.value ? { column: e.target.value, desc: c.sort?.desc } : undefined })} options={toOptions(colNames)} placeholder="(none)" />
+              <SelectField
+                label="Direction"
+                disabled={!c.sort}
+                value={c.sort?.desc ? "desc" : "asc"}
+                onChange={(e) => c.sort && set({ sort: { ...c.sort, desc: e.target.value === "desc" } })}
+                options={[
+                  { value: "asc", label: "Ascending" },
+                  { value: "desc", label: "Descending" },
+                ]}
+              />
+              <TextField label="Max rows" type="number" min={1} max={10000} value={c.page_size ?? 500} onChange={(e) => set({ page_size: Number(e.target.value) || 500 })} />
+            </div>
           </div>
         )}
 
@@ -105,12 +152,11 @@ export function WidgetConfigDrawer({ widget, onChange, onClose }: { widget: Widg
         {widget.type === "alert" && (
           <fieldset className="space-y-2">
             <legend className="text-xs font-semibold">Thresholds (first match wins)</legend>
-            <SelectField label="Value column" value={c.value_column ?? ""} onChange={(e) => set({ value_column: e.target.value || undefined })} options={toOptions(colNames)} placeholder="(first numeric)" />
             {(c.thresholds ?? []).map((t, i) => {
               const upd = (p: Partial<Threshold>) => set({ thresholds: (c.thresholds ?? []).map((x, j) => (j === i ? { ...x, ...p } : x)) });
               return (
                 <div key={i} className="grid grid-cols-[4.5rem_1fr_1fr_auto] items-end gap-1">
-                  <SelectField label="Op" value={t.op} onChange={(e) => upd({ op: e.target.value as Threshold["op"] })} options={toOptions(OPS)} />
+                  <SelectField label="Op" value={t.op} onChange={(e) => upd({ op: e.target.value as Threshold["op"] })} options={toOptions(THRESHOLD_OPS)} />
                   <TextField label="Value" type="number" value={t.value} onChange={(e) => upd({ value: Number(e.target.value) })} />
                   <SelectField label="Status" value={t.color} onChange={(e) => upd({ color: e.target.value })} options={COLORS} />
                   <Button size="sm" variant="ghost" aria-label={`Remove threshold ${i + 1}`} onClick={() => set({ thresholds: (c.thresholds ?? []).filter((_, j) => j !== i) })}>

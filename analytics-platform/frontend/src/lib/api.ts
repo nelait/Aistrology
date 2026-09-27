@@ -373,6 +373,11 @@ export const api = {
     me: () => client.get<T.Me>("/v1/auth/me"),
     mfaSetup: () => client.post<{ otpauth_uri: string }>("/v1/auth/mfa/setup"),
     mfaActivate: (code: string) => client.post<void>("/v1/auth/mfa/activate", { code }),
+    oidcProviders: () => client.request<{ providers: string[] }>("/v1/auth/oidc/providers", { auth: false }),
+    oidcAuthorize: (provider: string, redirect_uri: string) =>
+      client.request<{ authorization_url: string; state: string }>(`/v1/auth/oidc/${enc(provider)}/authorize`, { auth: false, query: { redirect_uri } }),
+    oidcCallback: (provider: string, code: string, state: string) =>
+      client.request<T.TokenPair>(`/v1/auth/oidc/${enc(provider)}/callback`, { method: "POST", json: { code, state }, auth: false }),
   },
 
   tenant: {
@@ -391,6 +396,8 @@ export const api = {
     secrets: () => client.get<{ names: string[] }>("/v1/tenant/secrets"),
     putSecret: (name: string, value: string) => client.put<void>(`/v1/tenant/secrets/${enc(name)}`, { value }),
     deleteSecret: (name: string) => client.del(`/v1/tenant/secrets/${enc(name)}`),
+    sso: () => client.get<T.SSOSettings>("/v1/tenant/sso"),
+    putSso: (body: T.SSOSettings) => client.put<T.SSOSettings>("/v1/tenant/sso", body),
     llmUsage: () => client.get<T.LLMUsage>("/v1/tenant/llm-usage"),
     usage: (since?: string) => client.get<T.Usage>("/v1/tenant/usage", { since }),
     audit: (action?: string) => client.get<T.AuditEntry[]>("/v1/tenant/audit", { action }),
@@ -425,15 +432,22 @@ export const api = {
     },
   },
 
+  projects: {
+    list: () => client.get<T.Project[]>("/v1/projects"),
+    create: (body: { name: string; open: boolean; members: string[] }) => client.post<T.Project>("/v1/projects", body),
+    addMember: (id: string, user_id: string) => client.post<void>(`/v1/projects/${enc(id)}/members`, { user_id }),
+    removeMember: (id: string, userId: string) => client.del(`/v1/projects/${enc(id)}/members/${enc(userId)}`),
+  },
+
   datasets: {
-    list: () => client.get<T.DatasetRecord[]>("/v1/datasets"),
+    list: (project_id?: string) => client.get<T.DatasetRecord[]>("/v1/datasets", { project_id }),
     get: (id: string, version?: number) => client.get<T.DatasetRecord>(`/v1/datasets/${enc(id)}`, { version }),
     versions: (id: string) => client.get<T.DatasetRecord[]>(`/v1/datasets/${enc(id)}/versions`),
     remove: (id: string) => client.del(`/v1/datasets/${enc(id)}`),
-    upload: (file: File, onProgress?: (p: UploadProgress) => void, signal?: AbortSignal) => {
+    upload: (file: File, onProgress?: (p: UploadProgress) => void, signal?: AbortSignal, project_id?: string) => {
       const form = new FormData();
       form.append("file", file, file.name);
-      return client.upload<T.UploadResponse>("/v1/datasets", form, onProgress, signal);
+      return client.upload<T.UploadResponse>("/v1/datasets", form, onProgress, signal, { project_id });
     },
     putSchema: (id: string, schema: T.Schema) => client.put<T.DatasetRecord>(`/v1/datasets/${enc(id)}/schema`, schema),
     profile: (id: string, version?: number) => client.get<T.DatasetProfile>(`/v1/datasets/${enc(id)}/profile`, { version }),
@@ -477,20 +491,22 @@ export const api = {
     run: (id: string) => client.get<T.Run>(`/v1/runs/${enc(id)}`),
     compare: (runIds: string[]) => client.get<T.CompareResponse>("/v1/experiments/compare", { run_ids: runIds.join(",") }),
     explain: (runId: string, instances: Record<string, unknown>[]) => client.post<T.ExplainResponse>(`/v1/runs/${enc(runId)}/explain`, { instances }),
+    /** XAI-005: plain-English explanation from aggregate explanations (LLM). */
+    explanationText: (runId: string) => client.post<{ text: string }>(`/v1/runs/${enc(runId)}/explanation-text`),
   },
 
   models: {
-    register: (body: { name: string; run_id: string; description?: string }) => client.post<T.ModelDetail | T.RegisteredModel>("/v1/models", body),
+    register: (body: { name: string; run_id: string; description?: string }) => client.post<T.RegisterResponse>("/v1/models", body),
     list: () => client.get<T.RegisteredModel[]>("/v1/models"),
     get: (id: string) => client.get<T.ModelDetail>(`/v1/models/${enc(id)}`),
-    setStage: (id: string, version: number, stage: T.Stage) => client.post<T.ModelVersion>(`/v1/models/${enc(id)}/versions/${version}/stage`, { stage }),
+    setStage: (id: string, version: number, stage: T.Stage) => client.post<T.ModelDetail>(`/v1/models/${enc(id)}/versions/${version}/stage`, { stage }),
   },
 
   endpoints: {
     create: (body: T.EndpointCreate) => client.post<T.ServingEndpoint>("/v1/endpoints", body),
     list: () => client.get<T.ServingEndpoint[]>("/v1/endpoints"),
     get: (name: string) => client.get<T.ServingEndpoint>(`/v1/endpoints/${enc(name)}`),
-    patch: (name: string, body: Partial<T.EndpointCreate>) => client.patch<T.ServingEndpoint>(`/v1/endpoints/${enc(name)}`, body),
+    patch: (name: string, body: T.EndpointPatch) => client.patch<T.ServingEndpoint>(`/v1/endpoints/${enc(name)}`, body),
     remove: (name: string) => client.del(`/v1/endpoints/${enc(name)}`),
     predict: (name: string, instances: Record<string, unknown>[], explain = false) =>
       client.post<T.PredictResponse>(`/v1/endpoints/${enc(name)}/predict`, { instances, explain }),
@@ -503,7 +519,7 @@ export const api = {
     batchResult: (name: string, jobId: string) => client.download(`/v1/endpoints/${enc(name)}/batch/${enc(jobId)}`),
     openapi: (name: string) => client.get<Record<string, unknown>>(`/v1/endpoints/${enc(name)}/openapi.json`),
     openapiUrl: (name: string) => client.url(`/v1/endpoints/${enc(name)}/openapi.json`),
-    metrics: (name: string) => client.get<T.EndpointMetrics>(`/v1/endpoints/${enc(name)}/metrics`),
+    metrics: (name: string, hours = 24) => client.get<T.EndpointMetrics>(`/v1/endpoints/${enc(name)}/metrics`, { hours }),
   },
 
   analytics: {
@@ -511,7 +527,8 @@ export const api = {
     list: () => client.get<T.Analytic[]>("/v1/analytics"),
     get: (id: string) => client.get<T.Analytic>(`/v1/analytics/${enc(id)}`),
     remove: (id: string) => client.del(`/v1/analytics/${enc(id)}`),
-    run: (id: string, params: Record<string, unknown>) => client.post<T.TabularResult>(`/v1/analytics/${enc(id)}/run`, { params }),
+    run: (id: string, params: Record<string, unknown>, filters: Record<string, T.FilterValue> = {}) =>
+      client.post<T.TabularResult>(`/v1/analytics/${enc(id)}/run`, { params, filters }),
   },
 
   dashboards: {
@@ -520,12 +537,16 @@ export const api = {
     get: (id: string) => client.get<T.Dashboard>(`/v1/dashboards/${enc(id)}`),
     update: (id: string, body: { name?: string; spec?: T.DashboardSpec }) => client.put<T.Dashboard>(`/v1/dashboards/${enc(id)}`, body),
     remove: (id: string) => client.del(`/v1/dashboards/${enc(id)}`),
+    fromTemplate: (template: string, name: string, values: Record<string, string>) => client.post<T.Dashboard>("/v1/dashboards/from-template", { template, name, values }),
     clone: (id: string) => client.post<T.Dashboard>(`/v1/dashboards/${enc(id)}/clone`),
-    archive: (id: string) => client.post<T.Dashboard>(`/v1/dashboards/${enc(id)}/archive`),
-    share: (id: string, user_id: string, role: "editor" | "viewer") => client.post<unknown>(`/v1/dashboards/${enc(id)}/share`, { user_id, role }),
+    archive: (id: string, archived = true) => client.post<T.Dashboard>(`/v1/dashboards/${enc(id)}/archive`, undefined, { archived }),
+    /** user_id "*" shares with everyone in the organization */
+    share: (id: string, user_id: string, role: "editor" | "viewer") => client.post<T.Dashboard>(`/v1/dashboards/${enc(id)}/share`, { user_id, role }),
     widgetData: (id: string, widgetId: string, filters: Record<string, T.FilterValue>, signal?: AbortSignal) =>
       client.request<T.TabularResult>(`/v1/dashboards/${enc(id)}/widgets/${enc(widgetId)}/data`, { method: "POST", json: { filters }, signal }),
-    export: (id: string, format: "html" | "json") => client.download(`/v1/dashboards/${enc(id)}/export`, { query: { format } }),
+    /** DSH-009a interactive HTML snapshot (rendered server-side with the given filters). */
+    exportHtml: (id: string, filters: Record<string, T.FilterValue> = {}) => client.download(`/v1/dashboards/${enc(id)}/export`, { method: "POST", json: { filters } }),
+    embedToken: (id: string, ttl_minutes = 60) => client.post<{ token: string; expires_in_minutes: number; embed_path: string }>(`/v1/dashboards/${enc(id)}/embed-token`, { ttl_minutes }),
     templates: () => client.get<T.DashboardTemplate[]>("/v1/dashboards/templates"),
   },
 

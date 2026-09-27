@@ -4,6 +4,8 @@ import { RequirePermission } from "@/components/RequirePermission";
 import { PageHeader, TabPanel, Tabs } from "@/components/ui";
 import { OrgTab } from "@/components/admin/OrgTab";
 import { UsersTab } from "@/components/admin/UsersTab";
+import { ProjectsTab } from "@/components/admin/ProjectsTab";
+import { SsoTab } from "@/components/admin/SsoTab";
 import { ApiKeysTab } from "@/components/admin/ApiKeysTab";
 import { LlmTab } from "@/components/admin/LlmTab";
 import { UsageTab } from "@/components/admin/UsageTab";
@@ -14,6 +16,8 @@ import { DataTab } from "@/components/admin/DataTab";
 const TABS = [
   { id: "org", label: "Organization" },
   { id: "users", label: "Users" },
+  { id: "projects", label: "Projects" },
+  { id: "sso", label: "SSO" },
   { id: "keys", label: "API keys" },
   { id: "llm", label: "LLM provider" },
   { id: "usage", label: "Usage" },
@@ -35,6 +39,8 @@ export default function AdminPage() {
       <TabPanel id={tab}>
         {tab === "org" && <OrgTab />}
         {tab === "users" && <UsersTab />}
+        {tab === "projects" && <ProjectsTab />}
+        {tab === "sso" && <SsoTab />}
         {tab === "keys" && <ApiKeysTab />}
         {tab === "llm" && <LlmTab />}
         {tab === "usage" && <UsageTab />}

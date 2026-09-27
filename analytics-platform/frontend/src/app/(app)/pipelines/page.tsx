@@ -16,7 +16,7 @@ export default function PipelinesPage() {
   const datasetId = params.get("dataset") ?? "";
   const [name, setName] = useState("Cleaning pipeline");
 
-  const datasets = useQuery({ queryKey: ["datasets"], queryFn: api.datasets.list });
+  const datasets = useQuery({ queryKey: ["datasets"], queryFn: () => api.datasets.list() });
   const pipelines = useQuery({ queryKey: ["pipelines", datasetId], queryFn: () => api.pipelines.list(datasetId || undefined) });
   const templates = useQuery({ queryKey: ["pipeline-templates"], queryFn: api.pipelines.templates });
 

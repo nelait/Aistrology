@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { ApiError } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { AuthCard } from "@/components/AuthCard";
 import { Button, TextField } from "@/components/ui";
@@ -14,6 +14,46 @@ const MESSAGES: Record<string, string> = {
   mfa_enrollment_required: "Your organization requires two-factor authentication. Ask an admin to help you enroll, then sign in again.",
   disabled: "This account has been disabled. Contact your organization admin.",
 };
+
+const PROVIDER_LABELS: Record<string, string> = { google: "Google", microsoft: "Microsoft", azure: "Microsoft", okta: "Okta" };
+
+function SsoButtons({ next }: { next: string }) {
+  const [providers, setProviders] = useState<string[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.auth.oidcProviders().then((r) => setProviders(r.providers), () => setProviders([]));
+  }, []);
+  if (!providers.length) return null;
+  const start = async (provider: string) => {
+    setBusy(provider);
+    setError(null);
+    try {
+      const redirect = `${window.location.origin}/auth/callback`;
+      const { authorization_url, state } = await api.auth.oidcAuthorize(provider, redirect);
+      sessionStorage.setItem("ap.oidc", JSON.stringify({ provider, state, next }));
+      window.location.assign(authorization_url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "SSO is unavailable");
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="mt-6 space-y-2">
+      <p className="text-center text-xs text-[var(--text-2)]">or continue with</p>
+      {providers.map((p) => (
+        <Button key={p} className="w-full" onClick={() => start(p)} loading={busy === p}>
+          {PROVIDER_LABELS[p] ?? p}
+        </Button>
+      ))}
+      {error && (
+        <p role="alert" className="text-sm text-red-700 dark:text-red-400">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function safeNext(next: string | null): string {
   return next && next.startsWith("/") && !next.startsWith("//") ? next : "/datasets";
@@ -92,6 +132,7 @@ function LoginForm() {
           </Button>
         )}
       </form>
+      <SsoButtons next={next} />
       <p className="mt-6 text-center text-sm text-[var(--text-2)]">
         New to the platform?{" "}
         <Link href="/signup" className="font-medium text-brand-600 underline dark:text-brand-300">

@@ -38,7 +38,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
   const toast = useToast();
   const qc = useQueryClient();
   const params = useSearchParams();
-  const canEdit = can("dashboards.edit") && dashboard.role !== "viewer";
+  const canEdit = can("dashboards.edit") && dashboard.your_role !== "viewer";
 
   const [spec, setSpec] = useState<DashboardSpec>(() => normalizeSpec(dashboard.spec));
   const [name, setName] = useState(dashboard.name);
@@ -52,7 +52,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
   const [datePreset, setDatePreset] = useState(spec.date_range?.default ?? "all");
   const [customRange, setCustomRange] = useState<{ from?: string; to?: string }>({});
   const [cross, setCross] = useState<CrossFilter[]>([]);
-  const [refresh, setRefresh] = useState(spec.refresh_seconds ?? 0);
+  const [refresh, setRefresh] = useState<number>(spec.refresh_seconds ?? 0);
   const [presenting, setPresenting] = useState(false);
   const [exportMenu, setExportMenu] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
@@ -60,7 +60,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
   const charts = useRef(new Map<string, EChartsType>());
   const { width, containerRef, mounted } = useContainerWidth();
 
-  const datasets = useQuery({ queryKey: ["datasets"], queryFn: api.datasets.list, meta: { silent: true } });
+  const datasets = useQuery({ queryKey: ["datasets"], queryFn: () => api.datasets.list(), meta: { silent: true } });
 
   const dirty = JSON.stringify({ name, spec }) !== savedJson;
   const savedSpec = useMemo(() => (JSON.parse(savedJson) as { spec: DashboardSpec }).spec, [savedJson]);
@@ -73,6 +73,9 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
     meta: { errorPrefix: "Dashboard not saved" },
     onSuccess: (d) => {
       const s = normalizeSpec(d?.spec ?? spec);
+      // adopt the server's normalized spec so "unsaved changes" reflects real edits only
+      setSpec(s);
+      setName(d?.name ?? name);
       setSavedJson(JSON.stringify({ name: d?.name ?? name, spec: s }));
       qc.setQueryData(["dashboard", dashboard.id], d);
       qc.invalidateQueries({ queryKey: ["widget-data", dashboard.id] });
@@ -174,8 +177,14 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
   const exportServer = async (format: "html" | "json") => {
     setExportMenu(false);
     try {
-      const { blob, filename } = await api.dashboards.export(dashboard.id, format);
-      saveBlob(blob, filename ?? `${name}.${format}`);
+      if (format === "json") {
+        const d = await api.dashboards.get(dashboard.id);
+        saveBlob(new Blob([JSON.stringify(d, null, 2)], { type: "application/json" }), `${name}.json`);
+        return;
+      }
+      // Interactive HTML snapshot rendered by the API with the current filters (DSH-009a).
+      const { blob, filename } = await api.dashboards.exportHtml(dashboard.id, buildFilters(filterValues, dateRange, cross));
+      saveBlob(blob, filename ?? `${name}.html`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Export failed");
     }

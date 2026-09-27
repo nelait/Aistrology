@@ -45,12 +45,12 @@ export default function EndpointsPage() {
                       {e.name}
                     </Link>
                     <p className="text-xs text-[var(--text-2)]">
-                      {models.data?.find((m) => m.id === e.model_id)?.name ?? e.model_id}
-                      {e.version ? ` v${e.version}` : ""}
-                      {e.routes?.length ? ` · A/B: ${e.routes.map((r) => `${r.model_version_id} ${r.weight}`).join(" / ")}` : ""}
+                      {e.routes
+                        .map((r) => `${models.data?.find((m) => m.id === r.model_id)?.name ?? r.model_id} v${r.version}${e.routes.length > 1 ? ` (${r.weight}%)` : ""}`)
+                        .join(" · ")}
                     </p>
                   </div>
-                  {e.status && <Badge tone={e.status === "ready" || e.status === "running" ? "good" : "neutral"}>{e.status}</Badge>}
+                  <Badge tone={e.status === "active" ? "good" : "warning"}>{e.status}</Badge>
                 </li>
               ))}
             </ul>

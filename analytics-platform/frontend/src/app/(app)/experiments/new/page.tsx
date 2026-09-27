@@ -126,7 +126,7 @@ function NewExperiment() {
   const [hp, setHp] = useState<Record<string, Record<string, JsonValue>>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const datasets = useQuery({ queryKey: ["datasets"], queryFn: api.datasets.list });
+  const datasets = useQuery({ queryKey: ["datasets"], queryFn: () => api.datasets.list() });
   const algorithms = useQuery({ queryKey: ["algorithms"], queryFn: api.training.algorithms, staleTime: Infinity });
   const dataset = datasets.data?.find((d) => d.id === form.dataset_id);
   const columns = useMemo(() => schemaColumns(dataset?.schema), [dataset]);
@@ -234,7 +234,16 @@ function NewExperiment() {
                 ) : detect.data ? (
                   <>
                     Detected: <Badge tone="info">{detect.data.problem_type}</Badge> <span className="text-[var(--text-2)]">{detect.data.reason}</span>
-                    {detect.data.classes?.length ? <span className="block text-xs text-[var(--text-2)]">Classes: {detect.data.classes.slice(0, 10).map(String).join(", ")}</span> : null}
+                    {detect.data.classes?.length ? (
+                      <span className="block text-xs text-[var(--text-2)]">
+                        Classes:{" "}
+                        {detect.data.classes
+                          .slice(0, 10)
+                          .map((c) => (c && typeof c === "object" && "value" in c ? `${String(c.value)} (${String(c.count)})` : String(c)))
+                          .join(", ")}
+                      </span>
+                    ) : null}
+                    {detect.data.imbalance_hint && <span className="block text-xs text-amber-800 dark:text-amber-300">⚠ {detect.data.imbalance_hint}</span>}
                   </>
                 ) : null}
               </div>

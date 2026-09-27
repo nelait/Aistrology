@@ -66,7 +66,7 @@ export function Compare({ runIds }: { runIds: string[] }) {
             <EChart
               ariaLabel={`${m} by run`}
               height={60 + d.runs.length * 32}
-              option={barH(d.runs.map((r) => ({ name: `${r.algorithm} (${r.id.slice(0, 6)})`, value: r.metrics[m] ?? 0 })), { dark, name: m })}
+              option={barH(d.runs.map((r) => ({ name: `${r.algorithm} (${r.id.slice(0, 6)})`, value: typeof r.metrics[m] === "number" ? (r.metrics[m] as number) : 0 })), { dark, name: m })}
             />
           </Card>
         </div>

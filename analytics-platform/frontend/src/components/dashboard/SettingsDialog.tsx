@@ -29,7 +29,6 @@ export function SettingsDialog({ spec, columns, open, onClose, onChange }: { spe
                 options={[
                   { value: "dropdown", label: "Dropdown" },
                   { value: "multiselect", label: "Multi-select" },
-                  { value: "text", label: "Text" },
                   { value: "slider", label: "Range" },
                   { value: "date", label: "Date range" },
                 ]}
@@ -67,7 +66,7 @@ export function SettingsDialog({ spec, columns, open, onClose, onChange }: { spe
         <SelectField
           label="Auto-refresh"
           value={String(spec.refresh_seconds ?? 0)}
-          onChange={(e) => onChange({ ...spec, refresh_seconds: Number(e.target.value) })}
+          onChange={(e) => onChange({ ...spec, refresh_seconds: Number(e.target.value) || null })}
           options={REFRESH_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))}
         />
 

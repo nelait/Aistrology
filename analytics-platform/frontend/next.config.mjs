@@ -1,8 +1,13 @@
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
 /** @type {import('next').NextConfig} */
 const proxyTarget = process.env.API_PROXY_TARGET;
 
 const nextConfig = {
   output: "standalone",
+  // The repository has other lockfiles; trace from this app so .next/standalone/server.js sits at the root.
+  outputFileTracingRoot: dirname(fileURLToPath(import.meta.url)),
   reactStrictMode: true,
   poweredByHeader: false,
   // Optional same-origin proxy: set NEXT_PUBLIC_API_URL=/api and API_PROXY_TARGET=http://backend:8000

@@ -4,11 +4,29 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
+function typeOf(x: Record<string, unknown>): string {
+  if (typeof x.type === "string") return x.type;
+  const dtype = typeof x.dtype === "string" ? x.dtype : "";
+  if (x.group === "numeric" || /^(int|float|uint)/.test(dtype)) return "number";
+  if (x.group === "datetime" || /datetime/.test(dtype)) return "datetime";
+  if (dtype === "bool") return "boolean";
+  return "string";
+}
+
 function fromList(list: unknown[]): SignatureField[] {
   return list
-    .map((x) => {
+    .map((x): SignatureField | null => {
       if (typeof x === "string") return { name: x, type: "string" };
-      if (isRecord(x) && typeof x.name === "string") return { name: x.name, type: typeof x.type === "string" ? x.type : typeof x.dtype === "string" ? x.dtype : "string" };
+      if (isRecord(x) && typeof x.name === "string") {
+        if (x.group === "dropped") return null; // not used by the model
+        return {
+          name: x.name,
+          type: typeOf(x),
+          categories: Array.isArray(x.categories) ? x.categories.map(String) : undefined,
+          min: typeof x.min === "number" ? x.min : undefined,
+          max: typeof x.max === "number" ? x.max : undefined,
+        };
+      }
       return null;
     })
     .filter((x): x is SignatureField => x !== null);
@@ -23,13 +41,14 @@ export function signatureFields(sig: unknown): SignatureField[] {
   if (!sig) return [];
   if (Array.isArray(sig)) return fromList(sig);
   if (!isRecord(sig)) return [];
-  for (const key of ["inputs", "features", "columns", "input"]) {
+  for (const key of ["features", "inputs", "columns", "input"]) {
     const v = sig[key];
     if (Array.isArray(v)) return fromList(v);
     if (isRecord(v)) return signatureFields(v);
   }
   if (isRecord(sig.properties))
     return Object.entries(sig.properties).map(([name, p]) => ({ name, type: isRecord(p) && typeof p.type === "string" ? p.type : "string" }));
+  if ("target" in sig || "problem_type" in sig) return [];
   const entries = Object.entries(sig).filter(([, v]) => typeof v === "string");
   return entries.map(([name, type]) => ({ name, type: String(type) }));
 }

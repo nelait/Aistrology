@@ -35,7 +35,8 @@ export function UsersTab() {
   const generatePassword = () => {
     const bytes = new Uint8Array(18);
     crypto.getRandomValues(bytes);
-    setForm((f) => ({ ...f, password: btoa(String.fromCharCode(...bytes)).replace(/[+/=]/g, "x") }));
+    // base64 body plus guaranteed upper, lower and digit characters (backend password policy)
+    setForm((f) => ({ ...f, password: `${btoa(String.fromCharCode(...bytes)).replace(/[+/=]/g, "x")}Aa7` }));
   };
 
   return (
@@ -107,7 +108,7 @@ export function UsersTab() {
           <TextField label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           <SelectField label="Role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })} options={roleOptions} />
           <div className="flex items-end gap-2">
-            <TextField className="flex-1" label="Temporary password" hint="At least 12 characters. Share it securely; the user should change it and enable MFA." value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+            <TextField className="flex-1" label="Temporary password" hint="12+ characters with upper- and lower-case letters and a digit. Share it securely; the user should enable MFA." value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
             <Button onClick={generatePassword}>Generate</Button>
           </div>
         </div>
