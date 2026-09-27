@@ -1,4 +1,4 @@
-"""Batch prediction jobs (API-005) and webhook deliveries (WHK-001)."""
+"""Batch prediction jobs (API-005), drift checks (API-011) and webhook deliveries (WHK-001)."""
 
 from __future__ import annotations
 
@@ -31,6 +31,8 @@ def batch_predict_job(ctx: JobContext) -> dict:
     # Batch jobs use the endpoint's primary (highest-weight) route for consistent output.
     route = max(endpoint.routes, key=lambda r: r["weight"])
     bundle = svc.bundle_for(ctx.tenant_id, route)
+    if bundle.problem_type == "forecasting":
+        raise PermanentJobError("batch prediction isn't available for forecasting endpoints; call predict with a horizon")
     outputs = []
     for start in range(0, len(frame), CHUNK_ROWS):
         chunk = frame.iloc[start : start + CHUNK_ROWS]
@@ -50,6 +52,44 @@ def batch_predict_job(ctx: JobContext) -> dict:
     ctx.state.objects.put_bytes(ctx.tenant_id, key, out.to_csv(index=False).encode())
     ctx.state.metering.add(ctx.tenant_id, "api.predictions", endpoint.name, len(out))
     return {"output_key": key, "rows": len(out), "endpoint": endpoint.name, "model_version": route["version"]}
+
+
+@job_handler("serving.drift_check")
+def drift_check_job(ctx: JobContext) -> dict:
+    """API-011: compute drift for one endpoint (``params.endpoint``) or every active endpoint, and raise an
+    ``endpoint.threshold`` notification (and webhook) for each endpoint whose drift reaches the alert threshold.
+
+    Submit it on a schedule (cron / Cloud Scheduler calling ``POST /v1/endpoints/drift-checks``) or on demand.
+    """
+    from ..jobs.core import notify
+
+    svc = ServingService(ctx.state)
+    hours = int(ctx.params.get("hours") or 24)
+    names = [ctx.params["endpoint"]] if ctx.params.get("endpoint") else [e.name for e in svc.list(ctx.tenant_id) if e.status == "active"]
+    checked, alerts = [], []
+    for i, name in enumerate(names):
+        try:
+            report = svc.drift(ctx.tenant_id, name, hours)
+        except NotFound as exc:
+            if ctx.params.get("endpoint"):
+                raise PermanentJobError(f"endpoint not found: {exc}") from exc
+            continue
+        checked.append({"endpoint": name, "status": report["status"], "samples": report["samples"]})
+        if report["status"] == "alert":
+            prediction = report.get("prediction") or {}
+            body = {
+                "endpoint": name,
+                "kind": "drift",
+                "status": "alert",
+                "window_hours": hours,
+                "threshold": report["thresholds"]["alert"],
+                "features": [{"feature": f["feature"], "psi": f["psi"]} for f in report["features"] if f["status"] == "alert"],
+                "prediction_psi": prediction.get("psi"),
+            }
+            notify(ctx.state, ctx.tenant_id, None, "endpoint.threshold", f"drift alert on endpoint {name}", body)
+            alerts.append(body)
+        ctx.progress((i + 1) / max(1, len(names)), f"checked {i + 1}/{len(names)} endpoints")
+    return {"checked": checked, "alerts": alerts}
 
 
 @job_handler("webhook.deliver")

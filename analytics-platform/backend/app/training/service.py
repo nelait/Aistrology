@@ -1,4 +1,5 @@
-"""Experiments, runs, model artifacts and the model registry (EXP-001/007/008, MDL-NFR-004/005)."""
+"""Experiments, runs, model artifacts, the model registry and training templates (EXP-001/007/008, MDL-NFR-004/005,
+CFG-007)."""
 
 from __future__ import annotations
 
@@ -14,9 +15,10 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from ..datasets_io import load_table
-from ..db.models import Experiment, ModelVersion, RegisteredModel, Run
+from ..db.models import Experiment, ModelVersion, RegisteredModel, Run, TrainingTemplate
 from ..export_utils import jsonable
-from .algorithms import ALGORITHMS
+from .algorithms import get_algorithm
+from .local_explain import LIME_MAX_INSTANCES, force_plot, lime_explain
 from .trainer import TrainingConfig, aggregate_to_original, shap_values, train, transformed_feature_names
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -81,11 +83,25 @@ class ExperimentOut(BaseModel):
 class ModelBundle:
     """A trained pipeline plus what serving and explanations need."""
 
-    def __init__(self, pipeline, signature: dict[str, Any], background: pd.DataFrame, algorithm: str):
+    def __init__(self, pipeline, signature: dict[str, Any], background: pd.DataFrame, algorithm: str, reference: dict | None = None):
         self.pipeline = pipeline
         self.signature = signature
         self.background = background
         self.algorithm = algorithm
+        self._reference = reference
+
+    @property
+    def reference(self) -> dict[str, Any] | None:
+        """API-011 reference profile; artifacts from before drift monitoring derive one from the background sample."""
+        if self._reference is None and self.problem_type != "forecasting" and len(self.background):
+            from .drift_profile import build_reference
+
+            try:
+                ref = build_reference(self.background, self.signature, [self.pipeline], 0)
+                self._reference = {"rows": ref["rows"], "features": ref["features"], "prediction": ref["predictions"][0]}
+            except Exception:  # noqa: BLE001
+                self._reference = {"rows": 0, "features": {}, "prediction": None}
+        return self._reference
 
     @property
     def problem_type(self) -> str:
@@ -121,12 +137,31 @@ class ModelBundle:
                 frame[col] = frame[col].astype("boolean")
         return frame
 
+    def forecast(self, horizon: int | None = None, history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """TRN-007 serving: future timestamps, point forecasts and prediction intervals."""
+        from .forecasting import parse_history
+
+        if self.problem_type != "forecasting":
+            raise ValueError("this model is not a forecasting model; send instances")
+        h = int(horizon or self.signature.get("horizon") or 1)
+        if not 1 <= h <= 1000:
+            raise ValueError("horizon must be between 1 and 1000")
+        recent = parse_history(history, self.signature["time_column"], self.signature["target"]) if history else None
+        if recent is not None and len(recent) > 5000:
+            raise ValueError("at most 5000 history rows")
+        return {"horizon": h, **self.pipeline.forecast(h, recent)}
+
     def predict(self, instances: list[dict[str, Any]]) -> dict[str, Any]:
+        if self.problem_type == "forecasting":
+            first = instances[0] if instances else {}
+            return self.forecast(first.get("horizon"), first.get("history"))
         X = self.frame(instances)
         out: dict[str, Any] = {}
         pred = self.pipeline.predict(X)
         classes = self.signature.get("classes")
-        if classes:
+        if self.problem_type == "clustering":
+            out["predictions"] = [int(v) for v in pred]  # cluster ids; -1 = DBSCAN noise
+        elif classes:
             out["predictions"] = [jsonable(classes[int(i)]) for i in pred]
             if hasattr(self.pipeline, "predict_proba"):
                 out["probabilities"] = np.round(self.pipeline.predict_proba(X), 6).tolist()
@@ -136,15 +171,43 @@ class ModelBundle:
         return out
 
     def explain(self, instances: list[dict[str, Any]]) -> dict[str, Any]:
-        """XAI-002 / XAI-003: per-instance SHAP contributions on source features."""
+        """XAI-002 / XAI-002a / XAI-003: per-instance SHAP contributions on source features, SHAP force-plot data and a
+        LIME-style local surrogate (first ``LIME_MAX_INSTANCES`` instances)."""
+        if self.problem_type in ("clustering", "forecasting"):
+            raise ValueError(f"explanations are not available for {self.problem_type} models")
         X = self.frame(instances)
-        values, base = shap_values(self.pipeline, ALGORITHMS[self.algorithm], X, self.background, self.problem_type)
+        values, base = shap_values(self.pipeline, get_algorithm(self.algorithm), X, self.background, self.problem_type)
         per_feature = aggregate_to_original(values, transformed_feature_names(self.pipeline), self.groups())
-        return {
-            **self.predict(instances),
-            "shap": [{k: float(v) for k, v in row.items()} for row in per_feature.to_dict(orient="records")],
-            "base_value": base,
-        }
+        shap_rows = [{k: float(v) for k, v in row.items()} for row in per_feature.to_dict(orient="records")]
+        out = {**self.predict(instances), "shap": shap_rows, "base_value": base}
+        out["force_plot"] = [force_plot(base, row, instances[i]) for i, row in enumerate(shap_rows)]
+        out["lime"] = self.lime(instances[:LIME_MAX_INSTANCES])
+        return out
+
+    def lime(self, instances: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """XAI-002a: weighted linear local surrogates. Classifiers explain the probability of the predicted class."""
+        used = [f["name"] for f in self.signature["features"] if f["group"] != "dropped"]
+        classes = self.signature.get("classes")
+        out = []
+        for i, instance in enumerate(instances):
+            target_index: int | None = None
+            if classes:
+                target_index = int(self.pipeline.predict(self.frame([instance]))[0])
+
+            def predict(rows, _t=target_index):
+                X = self.frame(rows)
+                if _t is not None and hasattr(self.pipeline, "predict_proba"):
+                    return self.pipeline.predict_proba(X)[:, _t]
+                return self.pipeline.predict(X)
+
+            try:
+                result = lime_explain(instance, self.background, used, predict, seed=i)
+            except ValueError as exc:
+                result = {"error": str(exc)}
+            if classes and target_index is not None:
+                result["explained_class"] = jsonable(classes[target_index])
+            out.append(result)
+        return out
 
 
 class TrainingService:
@@ -161,8 +224,10 @@ class TrainingService:
     ) -> ExperimentOut:
         record = self.state.store.get(tenant_id, dataset_id, dataset_version)
         frame_cols = [f.name for f in record.schema_.entities[0].fields] if record.schema_ and record.schema_.entities else None
-        if frame_cols is not None and config.target not in frame_cols:
+        if frame_cols is not None and config.target and config.target not in frame_cols:
             raise ValueError(f"target {config.target!r} is not a column of the dataset")
+        if frame_cols is not None and config.forecast and config.forecast.time_column not in frame_cols:
+            raise ValueError(f"time column {config.forecast.time_column!r} is not a column of the dataset")
         with self.state.db.session(tenant_id) as s:
             exp = Experiment(
                 tenant_id=tenant_id,
@@ -236,8 +301,23 @@ class TrainingService:
             key = f"models/runs/{run_id}/model.joblib"
             buf = io.BytesIO()
             # Platform-trained artifacts only; stored encrypted with the tenant key (MDL-NFR-004, SEC-010).
+            reference = None
+            if result.reference is not None:
+                preds = result.reference.get("predictions") or []
+                reference = {
+                    "rows": result.reference.get("rows"),
+                    "features": result.reference.get("features") or {},
+                    "prediction": preds[i] if i < len(preds) else None,
+                }
             joblib.dump(
-                {"pipeline": res.pipeline, "signature": result.signature, "background": result.background, "algorithm": res.algorithm}, buf
+                {
+                    "pipeline": res.pipeline,
+                    "signature": result.signature,
+                    "background": result.background,
+                    "algorithm": res.algorithm,
+                    "reference": reference,
+                },
+                buf,
             )
             self.state.objects.put_bytes(tenant_id, key, buf.getvalue())
             with self.state.db.session(tenant_id) as s:
@@ -283,7 +363,7 @@ class TrainingService:
         if not model_key:
             raise NotFound(f"run {run.id} has no model artifact")
         raw = joblib.load(io.BytesIO(self.state.objects.get_bytes(tenant_id, model_key)))
-        bundle = ModelBundle(raw["pipeline"], raw["signature"], raw["background"], raw["algorithm"])
+        bundle = ModelBundle(raw["pipeline"], raw["signature"], raw["background"], raw["algorithm"], raw.get("reference"))
         with self._cache_lock:
             self._cache[key] = bundle
             while len(self._cache) > self.CACHE_SIZE:
@@ -308,7 +388,10 @@ class TrainingService:
                 model_id=model.id,
                 version=next_version,
                 run_id=run_id,
-                signature={**bundle.signature, "algorithm": run.algorithm, "metrics": run.metrics},
+                # API-011: the training reference profile travels with the version for drift monitoring.
+                signature=jsonable(
+                    {**bundle.signature, "algorithm": run.algorithm, "metrics": run.metrics, "reference_profile": bundle.reference}
+                ),
             )
             s.add(mv)
             s.flush()
@@ -357,7 +440,11 @@ class TrainingService:
                         "run_id": v.run_id,
                         "metrics": v.signature.get("metrics", {}),
                         "algorithm": v.signature.get("algorithm"),
-                        "signature": {k: v.signature[k] for k in ("target", "problem_type", "classes", "features") if k in v.signature},
+                        "signature": {
+                            k: v.signature[k]
+                            for k in ("target", "problem_type", "classes", "features", "time_column", "frequency", "horizon")
+                            if k in v.signature
+                        },
                         "created_at": v.created_at,
                     }
                     for v in versions
@@ -392,3 +479,110 @@ class TrainingService:
                 raise NotFound(model_version_id)
             s.expunge(mv)
             return mv
+
+    # -- ONNX export (MDL-NFR-004) ---------------------------------------------------------------------
+    def export_onnx(self, tenant_id: str, actor: str, run_id: str) -> bytes:
+        from .onnx_export import export_onnx
+
+        bundle = self.load_bundle(tenant_id, run_id)
+        data = export_onnx(bundle.pipeline, bundle.signature, bundle.algorithm)
+        self.state.audit.record(tenant_id, actor, "model.export_onnx", run_id=run_id, bytes=len(data))
+        return data
+
+
+# -- training configuration templates (CFG-007) ----------------------------------------------------------------
+
+_PLACEHOLDER_TARGET = "__template_target__"
+
+
+class TemplateConflict(ValueError):
+    pass
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for key, value in override.items():
+        out[key] = deep_merge(out[key], value) if isinstance(value, dict) and isinstance(out.get(key), dict) else value
+    return out
+
+
+def validate_template_config(config: dict[str, Any]) -> dict[str, Any]:
+    """A template may leave out the target (it is dataset-specific); everything else must be a valid TrainingConfig."""
+    probe = dict(config)
+    if not probe.get("target") and probe.get("problem_type") != "clustering":
+        probe["target"] = _PLACEHOLDER_TARGET
+    TrainingConfig.model_validate(probe)
+    return config
+
+
+def _template_out(t: TrainingTemplate) -> dict[str, Any]:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "description": t.description,
+        "config": t.config,
+        "created_by": t.created_by,
+        "created_at": t.created_at,
+    }
+
+
+class TemplateService:
+    """CFG-007: save named TrainingConfig templates per tenant, list them and apply them to a dataset."""
+
+    def __init__(self, state: AppState):
+        self.state = state
+
+    def create(self, tenant_id: str, actor: str, *, name: str, description: str | None, config: dict[str, Any]) -> dict[str, Any]:
+        config = validate_template_config(config)
+        with self.state.db.session(tenant_id) as s:
+            exists = s.execute(
+                select(TrainingTemplate).where(TrainingTemplate.tenant_id == tenant_id, TrainingTemplate.name == name)
+            ).scalar_one_or_none()
+            if exists is not None:
+                raise TemplateConflict(f"template {name!r} already exists")
+            t = TrainingTemplate(tenant_id=tenant_id, name=name, description=description, config=config, created_by=actor)
+            s.add(t)
+            s.flush()
+            out = _template_out(t)
+        self.state.audit.record(tenant_id, actor, "training_template.create", template_id=out["id"], name=name)
+        return out
+
+    def list(self, tenant_id: str) -> list[dict[str, Any]]:
+        with self.state.db.session(tenant_id) as s:
+            rows = s.execute(select(TrainingTemplate).where(TrainingTemplate.tenant_id == tenant_id).order_by(TrainingTemplate.name))
+            return [_template_out(t) for t in rows.scalars()]
+
+    def get(self, tenant_id: str, template_id: str) -> dict[str, Any]:
+        with self.state.db.session(tenant_id) as s:
+            t = s.get(TrainingTemplate, template_id)
+            if t is None or t.tenant_id != tenant_id:
+                raise NotFound(template_id)
+            return _template_out(t)
+
+    def update(self, tenant_id: str, actor: str, template_id: str, *, description: str | None, config: dict[str, Any] | None) -> dict:
+        if config is not None:
+            validate_template_config(config)
+        with self.state.db.session(tenant_id) as s:
+            t = s.get(TrainingTemplate, template_id)
+            if t is None or t.tenant_id != tenant_id:
+                raise NotFound(template_id)
+            if description is not None:
+                t.description = description
+            if config is not None:
+                t.config = config
+            out = _template_out(t)
+        self.state.audit.record(tenant_id, actor, "training_template.update", template_id=template_id)
+        return out
+
+    def delete(self, tenant_id: str, actor: str, template_id: str) -> None:
+        with self.state.db.session(tenant_id) as s:
+            t = s.get(TrainingTemplate, template_id)
+            if t is None or t.tenant_id != tenant_id:
+                raise NotFound(template_id)
+            s.delete(t)
+        self.state.audit.record(tenant_id, actor, "training_template.delete", template_id=template_id)
+
+    def resolve(self, tenant_id: str, template_id: str, overrides: dict[str, Any]) -> TrainingConfig:
+        """The template's config with ``overrides`` deep-merged on top (the target usually comes from the overrides)."""
+        template = self.get(tenant_id, template_id)
+        return TrainingConfig.model_validate(deep_merge(template["config"], overrides))

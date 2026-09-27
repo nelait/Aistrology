@@ -1,4 +1,5 @@
-"""Feature preprocessing (FE-001 date parts, FE-002 encoding, FE-003 scaling, FE-004 selection) and resampling (CFG-006).
+"""Feature preprocessing (FE-001 date parts + automatic interactions, FE-002 encoding, FE-003 scaling, FE-004 selection,
+FE-005 PCA) and resampling (CFG-006).
 
 Everything that affects inference lives inside one scikit-learn Pipeline, so a
 served model applies exactly the transformations it was trained with.
@@ -36,12 +37,110 @@ class FeatureSelection(BaseModel):
     k: int = Field(default=20, ge=1, le=10_000)
 
 
+class AutoFeatures(BaseModel):
+    """FE-001: pairwise interactions (a×b) and squares (a²) of the ``top_k`` most informative numeric features."""
+
+    interactions: bool = True
+    polynomial: bool = True  # degree-2 terms (squares) in addition to interactions
+    top_k: int = Field(default=5, ge=2, le=20)
+
+
+class PCAConfig(BaseModel):
+    """FE-005: project the preprocessed features onto principal components.
+
+    ``n_components`` < 1 keeps enough components to explain that share of the variance; ≥ 1 is a component count.
+    Explanations are then reported per component (``pca0``, ``pca1``, …).
+    """
+
+    n_components: float = Field(default=0.95, gt=0.0, le=1000)
+
+
 class PreprocessingConfig(BaseModel):
     encoding: Literal["onehot", "ordinal", "target"] = "onehot"
     scaling: Literal["standard", "minmax", "robust", "log", "none"] = "standard"
     impute: Literal["median", "mean", "most_frequent"] = "median"
     feature_selection: FeatureSelection | None = None
     max_categories: int = Field(default=50, ge=2, le=1000)
+    auto_features: AutoFeatures | None = None
+    pca: PCAConfig | None = None
+
+
+class PairwiseFeatures(BaseEstimator, TransformerMixin):
+    """FE-001: products of every pair of input columns (``a x b``) and, optionally, squares (``a^2``).
+
+    Only the new terms are emitted; the linear terms already come from the numeric branch.
+    """
+
+    def __init__(self, interactions: bool = True, squares: bool = True):
+        self.interactions = interactions
+        self.squares = squares
+
+    def fit(self, X, y=None):
+        self.columns_ = list(X.columns) if hasattr(X, "columns") else [f"x{i}" for i in range(np.asarray(X).shape[1])]
+        pairs: list[tuple[int, int]] = []
+        n = len(self.columns_)
+        for i in range(n):
+            for j in range(i, n):
+                if (i == j and self.squares) or (i != j and self.interactions):
+                    pairs.append((i, j))
+        self.pairs_ = pairs
+        self.n_features_in_ = n
+        return self
+
+    def transform(self, X):
+        arr = np.asarray(X, dtype=float)
+        if not self.pairs_:
+            return np.empty((arr.shape[0], 0))
+        return np.column_stack([arr[:, i] * arr[:, j] for i, j in self.pairs_])
+
+    def get_feature_names_out(self, input_features=None):
+        c = list(input_features) if input_features is not None else self.columns_
+        return np.array([f"{c[i]}^2" if i == j else f"{c[i]} x {c[j]}" for i, j in self.pairs_], dtype=object)
+
+
+class CappedPCA(BaseEstimator, TransformerMixin):
+    """FE-005: PCA whose component count never exceeds what the data supports; outputs ``pca0``, ``pca1``, …"""
+
+    def __init__(self, n_components: float = 0.95, random_state: int = 0):
+        self.n_components = n_components
+        self.random_state = random_state
+
+    def fit(self, X, y=None):
+        from sklearn.decomposition import PCA
+
+        arr = np.asarray(X, dtype=float)
+        limit = max(1, min(arr.shape))
+        n = self.n_components if self.n_components < 1 else min(int(self.n_components), limit)
+        self.pca_ = PCA(n_components=n, svd_solver="full", random_state=self.random_state).fit(arr)
+        self.n_features_in_ = arr.shape[1]
+        return self
+
+    def transform(self, X):
+        return self.pca_.transform(np.asarray(X, dtype=float))
+
+    def get_feature_names_out(self, input_features=None):
+        return np.array([f"pca{i}" for i in range(self.pca_.n_components_)], dtype=object)
+
+
+def rank_numeric(frame: pd.DataFrame, numeric: list[str], y: np.ndarray | None, problem_type: str, k: int) -> list[str]:
+    """FE-001: pick the ``k`` numeric features most related to the target (|correlation| / mutual information), or with
+    the highest standardized spread when there is no target (clustering)."""
+    if len(numeric) <= k:
+        return list(numeric)
+    X = frame[numeric].astype(float)
+    X = X.fillna(X.median())
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if y is None:
+            scores = (X.std() / (X.abs().mean() + 1e-9)).fillna(0).to_numpy()
+        elif problem_type == "regression":
+            scores = np.abs([np.nan_to_num(np.corrcoef(X[c], y)[0, 1]) for c in numeric])
+        else:
+            from sklearn.feature_selection import mutual_info_classif
+
+            scores = mutual_info_classif(X.to_numpy(), y, random_state=0)
+    order = np.argsort(-np.asarray(scores), kind="stable")[:k]
+    return [numeric[i] for i in sorted(order)]
 
 
 class DatePartsExtractor(BaseEstimator, TransformerMixin):
@@ -111,6 +210,8 @@ def _looks_like_dates(s: pd.Series) -> bool:
 
 
 def build_preprocessor(groups: dict[str, list[str]], config: PreprocessingConfig, problem_type: str) -> ColumnTransformer:
+    """One ColumnTransformer for every feature group. ``groups["engineered"]`` (FE-001) lists the numeric columns that
+    get pairwise interaction / square terms."""
     scalers: dict[str, Any] = {
         "standard": StandardScaler(),
         "minmax": MinMaxScaler(),
@@ -123,7 +224,25 @@ def build_preprocessor(groups: dict[str, list[str]], config: PreprocessingConfig
         transformers.append(
             ("num", Pipeline([("impute", SimpleImputer(strategy=config.impute)), ("scale", scalers[config.scaling])]), groups["numeric"])
         )
+    if groups.get("engineered") and config.auto_features:
+        af = config.auto_features
+        transformers.append(
+            (
+                "fe",
+                Pipeline(
+                    [
+                        ("impute", SimpleImputer(strategy=config.impute)),
+                        ("scale0", StandardScaler()),
+                        ("pairs", PairwiseFeatures(interactions=af.interactions, squares=af.polynomial)),
+                        ("scale", clone_scaler(scalers[config.scaling])),
+                    ]
+                ),
+                groups["engineered"],
+            )
+        )
     if groups["categorical"]:
+        if config.encoding == "target" and problem_type == "clustering":
+            config = config.model_copy(update={"encoding": "onehot"})  # no target to encode against
         if config.encoding == "onehot":
             encoder: Any = OneHotEncoder(handle_unknown="infrequent_if_exist", max_categories=config.max_categories, sparse_output=False)
         elif config.encoding == "ordinal":
@@ -156,6 +275,12 @@ def build_preprocessor(groups: dict[str, list[str]], config: PreprocessingConfig
     if not transformers:
         raise ValueError("no usable features: every selected column is an identifier or free text")
     return ColumnTransformer(transformers, remainder="drop", verbose_feature_names_out=True)
+
+
+def clone_scaler(scaler: Any) -> Any:
+    from sklearn.base import clone
+
+    return scaler if isinstance(scaler, str) else clone(scaler)
 
 
 def _as_str(x):
@@ -266,6 +391,20 @@ def _smote(X, y, classes, counts, rng, k: int = 5):
         xs.append(members[base] + gap * (members[pick] - members[base]))
         ys.append(np.full(need, cls))
     return np.vstack(xs), np.concatenate(ys)
+
+
+def original_features(transformed_name: str, groups: dict[str, list[str]]) -> list[str]:
+    """Source columns of a transformed feature; engineered interactions (``fe__a x b``, FE-001) map to both inputs."""
+    prefix, _, rest = transformed_name.partition("__")
+    if prefix == "fe":
+        numeric = sorted(groups.get("numeric", []), key=len, reverse=True)
+        if rest.endswith("^2") and rest[:-2] in numeric:
+            return [rest[:-2]]
+        for a in numeric:
+            if rest.startswith(a + " x ") and rest[len(a) + 3 :] in numeric:
+                return [a, rest[len(a) + 3 :]]
+        return [rest]
+    return [original_feature(transformed_name, groups)]
 
 
 def original_feature(transformed_name: str, groups: dict[str, list[str]]) -> str:
