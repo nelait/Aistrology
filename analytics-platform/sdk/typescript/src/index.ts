@@ -25,6 +25,20 @@ export {
   verifyWebhookSignature,
 } from "./webhooks.js";
 export type { VerifyOptions, WebhookBody } from "./webhooks.js";
+export { parseSSE } from "./sse.js";
+export type { ServerSentEvent } from "./sse.js";
+export { PredictionSocket, toWebSocketUrl } from "./websocket.js";
+export type { SocketPredictRequest, WebSocketConstructor, WebSocketLike } from "./websocket.js";
+export { RESUMABLE_UPLOAD_THRESHOLD } from "./resources/datasets.js";
+export type { ResumableUploadOptions } from "./resources/datasets.js";
+export type { ConnectOptions } from "./resources/endpoints.js";
+export type { ModelUploadOptions } from "./resources/models.js";
+export type { ProjectsResource, TeamsResource } from "./resources/access.js";
+export type { CommentsResource } from "./resources/comments.js";
+export type { ConnectorsResource } from "./resources/connectors.js";
+export type { SchedulesResource } from "./resources/schedules.js";
+export type { StreamsResource } from "./resources/streams.js";
+export type { TrainingTemplatesResource } from "./resources/trainingTemplates.js";
 export type { UploadInput } from "./resources/base.js";
 export type { LoginParams } from "./resources/auth.js";
 export type { UploadOptions, VersionOptions } from "./resources/datasets.js";

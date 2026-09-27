@@ -1,6 +1,6 @@
 [project]
 name = "analytics-platform"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK and CLI for the Analytics Platform API"
 requires-python = ">=3.10"
 dependencies = ["httpx>=0.27"]

@@ -11,7 +11,16 @@ from pathlib import Path
 import httpx
 import pytest
 
-from analytics_platform import Client, JobFailedError, NotFoundError, RateLimitError, ServerError, ValidationError, verify_webhook_signature
+from analytics_platform import (
+    AuthenticationError,
+    Client,
+    JobFailedError,
+    NotFoundError,
+    RateLimitError,
+    ServerError,
+    ValidationError,
+    verify_webhook_signature,
+)
 from analytics_platform import client as client_mod
 from analytics_platform.cli import run as cli_run
 
@@ -135,6 +144,7 @@ def test_end_to_end_journey(tmp_path, monkeypatch, capsys):
     from app.main import create_app
 
     state = build_state(data_dir=tmp_path / "data", cloud_provider="local", database_url=None, inline_worker=False, dev_auth=False)
+    state.extras["canary_scheduler"] = lambda tenant, params, delay: None  # no timer threads; steps are driven explicitly
     http = TestClient(create_app(state), base_url="http://testserver")
     worker = Worker(state, wait_seconds=0)
 
@@ -187,3 +197,69 @@ def test_end_to_end_journey(tmp_path, monkeypatch, capsys):
     assert code == 0 and json.loads(capsys.readouterr().out)["predictions"] == ["no"]
     assert cli_run(["datasets", "list"], client=scoped) == 1  # scoped key can't read datasets
     assert "403" in capsys.readouterr().err
+
+    # Streaming inference (SSE), chunked
+    rows = frame.drop(columns=["churn"]).fillna(50.0).head(5).to_dict("records")
+    events = list(scoped.endpoints.predict_stream("churn-prod", rows, chunk_size=2))
+    assert [e.event for e in events] == ["start", "prediction", "prediction", "prediction", "done"]
+    assert sum(e.data["count"] for e in events if e.event == "prediction") == 5
+
+    # Fairness on the held-out test set
+    fairness = ap.experiments.fairness(best["id"], ["plan"])
+    assert fairness["attributes"][0]["attribute"] == "plan" and {g["group"] for g in fairness["attributes"][0]["groups"]} == {
+        "basic",
+        "pro",
+    }
+
+    # Canary rollout of a second version: start, inspect, abort
+    v2 = ap.models.register("churn", best["id"])
+    rollout = ap.endpoints.canary_start("churn-prod", v2["model_version_id"], steps=[25, 100], min_requests=5)
+    assert rollout["status"] == "running" and rollout["weight"] == 25
+    assert ap.endpoints.canary("churn-prod")["status"] == "running"
+    assert ap.endpoints.canary_abort("churn-prod")["status"] == "aborted"
+    assert [r["weight"] for r in ap.endpoints.get("churn-prod")["routes"]] == [100]
+
+    # Streams: create, send micro-batches, compact into a version
+    stream = ap.streams.create("clicks")
+    sent = ap.streams.send(stream["id"], [{"user": "u1", "n": 1}, {"user": "u2", "n": 2}])
+    assert sent["accepted"] == 2 and sent["buffered_rows"] == 2
+    compacted = ap.streams.compact(stream["id"], wait=True)
+    assert compacted["status"] == "succeeded"
+    status = ap.streams.get(stream["id"])
+    assert status["buffered_rows"] == 0 and status["stored_rows"] == 2
+
+    # Schedules: create, run now, inspect
+    assert any(t["job_type"] == "stream.compact" and t["allowed"] for t in ap.schedules.types())
+    schedule = ap.schedules.create(
+        "nightly compaction", "0 3 * * *", "stream.compact", {"dataset_id": stream["id"]}, timezone="Europe/Berlin"
+    )
+    assert schedule["enabled"] and len(schedule["upcoming"]) == 5
+    job = ap.schedules.run(schedule["id"], wait=True)
+    assert job["status"] == "succeeded" and job["params"]["trigger"] == "manual"
+    assert ap.schedules.pause(schedule["id"])["enabled"] is False
+    assert [s["id"] for s in ap.schedules.list(job_type="stream.compact")] == [schedule["id"]]
+
+    # CLI: streams send
+    assert cli_run(["streams", "send", stream["id"], '[{"user": "u3", "n": 3}]'], client=ap) == 0
+    assert json.loads(capsys.readouterr().out)["accepted"] == 1
+
+    # OAuth 2.0 client credentials: the SDK fetches the token itself
+    oauth = ap.tenant.create_oauth_client("scoring-service", role="analyst", scopes=["endpoints.predict"])
+    m2m = DrainingClient("http://testserver", client_id=oauth["client_id"], client_secret=oauth["client_secret"], http=http)
+    assert m2m.auth.me()["method"] == "oauth_client"
+    assert m2m.endpoints.predict("churn-prod", {"age": 40, "income": 90, "plan": "pro"})["predictions"] == ["yes"]
+    bad = DrainingClient("http://testserver", client_id=oauth["client_id"], client_secret="wrong", http=http)
+    with pytest.raises(AuthenticationError) as exc:
+        bad.auth.me()
+    assert exc.value.code == "invalid_client"
+
+    # Resumable upload in small parts, then retention settings
+    csv_bytes = frame.to_csv(index=False).encode()
+    parts = []
+    resumed = ap.datasets.upload_resumable(csv_bytes, "churn-resumable.csv", part_size=2048, on_progress=lambda s, t: parts.append(s))
+    assert resumed["dataset"]["name"].startswith("churn-resumable")
+    assert len(parts) == -(-len(csv_bytes) // 2048) and parts[-1] == len(csv_bytes)
+    assert ap.datasets.query(resumed["dataset"]["id"], "SELECT count(*) FROM data")["rows"] == [[n]]
+    retention = ap.tenant.set_retention(inference_logs_days=14)
+    assert retention["inference_logs_days"] == 14 and ap.tenant.retention()["audit_days"] >= 365
+    assert "prediction_logs_deleted" in ap.tenant.apply_retention()

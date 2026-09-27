@@ -1201,3 +1201,622 @@ export interface WebhookDelivery {
   created_at: Timestamp;
   delivered_at: Timestamp | null;
 }
+
+// ---------------------------------------------------------------------------------------------
+// OAuth 2.0 client credentials (MGT-004a)
+// ---------------------------------------------------------------------------------------------
+
+export interface ClientCredentialsToken {
+  access_token: string;
+  token_type: string;
+  /** Lifetime in seconds (900 by default). */
+  expires_in: number;
+  scope?: string;
+}
+
+export interface OAuthClientCreate {
+  name: string;
+  role?: Role;
+  /** Optional narrowing of the role's permissions. */
+  scopes?: Permission[] | string[];
+}
+
+export interface OAuthClient {
+  id: string;
+  client_id: string;
+  name: string;
+  role: Role | string;
+  scopes: string[];
+  created_at?: Timestamp;
+  [key: string]: unknown;
+}
+
+export interface OAuthClientWithSecret extends OAuthClient {
+  /** Shown once. */
+  client_secret: string;
+  token_url: string;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Projects and teams (AUTH-004)
+// ---------------------------------------------------------------------------------------------
+
+export interface Project {
+  id: string;
+  name: string;
+  open: boolean;
+  members?: string[];
+  teams?: string[];
+  created_at?: Timestamp;
+  [key: string]: unknown;
+}
+
+export interface ProjectCreate {
+  name: string;
+  open?: boolean;
+  members?: string[];
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  description: string | null;
+  members?: string[];
+  created_at?: Timestamp;
+  [key: string]: unknown;
+}
+
+export interface TeamCreate {
+  name: string;
+  description?: string | null;
+  members?: string[];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Schedules (Phase 3)
+// ---------------------------------------------------------------------------------------------
+
+export type ScheduleJobType =
+  | "analytics.scheduled_run"
+  | "dashboard.deliver"
+  | "serving.drift_check"
+  | "stream.compact"
+  | "dataset.profile"
+  | "pipeline.apply"
+  | (string & {});
+
+export interface ScheduleType {
+  job_type: ScheduleJobType;
+  permission: string;
+  description: string;
+  /** Whether the caller holds the permission. */
+  allowed: boolean;
+}
+
+export interface ScheduleCreate {
+  name: string;
+  /** 5-field cron expression, e.g. `0 6 * * mon-fri`. */
+  cron: string;
+  /** IANA time zone (default `UTC`). */
+  timezone?: string;
+  job_type: ScheduleJobType;
+  params?: Record<string, unknown>;
+  enabled?: boolean;
+}
+
+export interface ScheduleUpdate {
+  name?: string;
+  cron?: string;
+  timezone?: string;
+  params?: Record<string, unknown>;
+  enabled?: boolean;
+}
+
+export interface Schedule {
+  id: string;
+  name: string;
+  cron: string;
+  timezone: string;
+  job_type: ScheduleJobType;
+  params: Record<string, unknown>;
+  enabled: boolean;
+  next_run_at: Timestamp | null;
+  last_run_at: Timestamp | null;
+  last_job_id: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  last_result: Record<string, unknown> | null;
+  created_by: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  /** The next five run times. */
+  upcoming: Timestamp[];
+}
+
+export interface ScheduleRun {
+  schedule_id: string;
+  status: "submitted";
+  job_id: string;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Connectors (ING-007)
+// ---------------------------------------------------------------------------------------------
+
+export type ConnectorKind = "s3" | "gcs" | "postgresql" | "mysql" | (string & {});
+
+export interface ConnectorCreate {
+  name: string;
+  kind: ConnectorKind;
+  /** s3/gcs `{bucket, region?, project?, endpoint_url?}`; databases `{host, port?, database, sslmode?}`. */
+  config: Record<string, unknown>;
+  /** Written to the secret store and never returned. */
+  credentials?: Record<string, unknown>;
+}
+
+export interface Connector {
+  id: string;
+  name: string;
+  kind: ConnectorKind;
+  config: Record<string, unknown>;
+  created_by: string;
+  created_at: Timestamp;
+}
+
+export interface ConnectorImport {
+  project_id?: string;
+  name?: string;
+  /** One object (object storage). */
+  key?: string;
+  /** Up to 100 objects, one table each (object storage). */
+  prefix?: string;
+  /** A single SELECT (databases). */
+  query?: string;
+  row_limit?: number;
+}
+
+export interface ConnectorImportResult {
+  dataset_id: string;
+  version: number;
+  tables: { name: string; row_count: number; size_bytes: number }[];
+  warnings: string[];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Streams (ING-008)
+// ---------------------------------------------------------------------------------------------
+
+export interface StreamCreate {
+  name: string;
+  project_id?: string | null;
+  columns?: Record<string, unknown>[];
+  compact_rows?: number | null;
+  compact_bytes?: number | null;
+}
+
+export type StreamRecord = Record<string, string | number | boolean | null>;
+
+export interface StreamAppendResult {
+  dataset_id: string;
+  accepted: number;
+  buffered_rows: number;
+  buffered_bytes: number;
+  compaction_job_id?: string | null;
+}
+
+export interface StreamStatus {
+  dataset_id: string;
+  name: string;
+  version: number;
+  stored_bytes: number;
+  stored_rows: number;
+  buffered_rows: number;
+  buffered_bytes: number;
+  buffered_batches: number;
+  compact_rows: number;
+  compact_bytes: number;
+  max_dataset_bytes: number;
+  compacting_job_id: string | null;
+  last_compacted_at: Timestamp | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Comments (SHR-005)
+// ---------------------------------------------------------------------------------------------
+
+export interface Comment {
+  id: string;
+  dashboard_id: string;
+  widget_id: string | null;
+  parent_id: string | null;
+  author_id: string;
+  body: string;
+  mentions: string[];
+  resolved: boolean;
+  created_at: Timestamp;
+  edited_at: Timestamp | null;
+  replies?: Comment[];
+}
+
+export interface CommentCreate {
+  /** 1-5000 characters; `@<user_id>` mentions notify the user. */
+  body: string;
+  widget_id?: string | null;
+  parent_id?: string | null;
+}
+
+export interface CommentUpdate {
+  body?: string;
+  resolved?: boolean;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Multi-dataset analytics and suggestion feedback (LLM-008, LLM-009)
+// ---------------------------------------------------------------------------------------------
+
+/** `{alias: dataset_id}`; aliases match `^[a-z_][a-z0-9_]{0,39}$`. */
+export type DatasetAliases = Record<string, string>;
+
+export interface JoinCandidate {
+  left_table: string;
+  left_column: string;
+  right_table: string;
+  right_column: string;
+  /** Share of distinct left values found on the right. */
+  containment: number;
+}
+
+export interface MultiDatasetSuggestions {
+  suggestions: Suggestion[];
+  join_candidates: JoinCandidate[];
+}
+
+export interface SuggestionFeedback {
+  accepted: boolean;
+  suggestion: { chart_type: SuggestionChartType | string; category: SuggestionCategory | string; title?: string };
+}
+
+export interface SuggestionPreferences {
+  preferences: Record<string, Record<string, { accepted: number; rejected: number }>>;
+  summary: string | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Schema history (SCH-010)
+// ---------------------------------------------------------------------------------------------
+
+export interface SchemaDiff {
+  identical: boolean;
+  added_entities: string[];
+  removed_entities: string[];
+  entities: {
+    name: string;
+    added_fields: { name: string; type: string; nullable: boolean }[];
+    removed_fields: { name: string; type: string; nullable: boolean }[];
+    retyped_fields: { field: string; from_type: string; to_type: string }[];
+    changed_fields: { field: string; attribute: string; from: unknown; to: unknown }[];
+  }[];
+  breaking: boolean;
+  summary: string[];
+}
+
+export interface SavedSchema {
+  id: string;
+  project_id: string | null;
+  name: string;
+  current_version: number;
+  created_by: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  versions?: SavedSchemaVersion[];
+}
+
+export interface SavedSchemaVersion {
+  version: number;
+  message?: string | null;
+  source_format?: string | null;
+  created_by?: string;
+  created_at?: Timestamp;
+  schema?: Schema;
+  [key: string]: unknown;
+}
+
+export interface SaveSchemaRequest {
+  name: string;
+  schema: Schema;
+  project_id?: string | null;
+  message?: string | null;
+  source_format?: string | null;
+}
+
+export interface SaveSchemaResponse {
+  schema_record: SavedSchema;
+  version: SavedSchemaVersion;
+  /** False when the content is identical to the latest version. */
+  created: boolean;
+  diff?: SchemaDiff | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Dataset versions, annotations, advanced profiling, projections
+// ---------------------------------------------------------------------------------------------
+
+export type VersionMode = "append" | "replace";
+
+export interface DatasetEvolution {
+  dataset: DatasetRecord;
+  previous_version: number;
+  mode: VersionMode;
+  inference: InferenceResult;
+  diff: SchemaDiff;
+}
+
+export type ColumnAnnotation = "pii" | "sensitive" | "derived" | "target" | "id";
+
+export interface DatasetAnnotations {
+  dataset_id: string;
+  version: number;
+  /** `{entity: {field: [annotation]}}` */
+  annotations: Record<string, Record<string, ColumnAnnotation[]>>;
+}
+
+export interface AnnotationsUpdate {
+  columns: Record<string, ColumnAnnotation[]>;
+  entity?: string | null;
+  version?: number | null;
+  replace?: boolean;
+}
+
+export interface AdvancedProfileRequest {
+  isolation_forest?: { enabled?: boolean; contamination?: "auto" | number; n_estimators?: number; max_rows?: number; columns?: string[]; seed?: number };
+  near_duplicates?: { enabled?: boolean; columns?: string[]; threshold?: number; window?: number; max_rows?: number };
+  missing_patterns?: { enabled?: boolean; alpha?: number; max_rows?: number; max_columns?: number };
+}
+
+export interface AdvancedProfile {
+  row_count: number;
+  isolation_forest?: Record<string, unknown> | null;
+  near_duplicates?: Record<string, unknown> | null;
+  missing_patterns?: Record<string, unknown> | null;
+}
+
+export interface ProjectionRequest {
+  method?: "auto" | "umap" | "tsne" | "pca";
+  features?: string[];
+  color_by?: string;
+  /** 10-5000 (default 2000). */
+  sample?: number;
+  perplexity?: number;
+  n_neighbors?: number;
+  seed?: number;
+}
+
+export interface Projection {
+  method: string;
+  n: number;
+  total_rows: number;
+  x: number[];
+  y: number[];
+  color_by?: string | null;
+  color?: unknown[] | null;
+  features?: string[] | null;
+  actual?: unknown[] | null;
+  note?: string | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Training templates, fairness, custom model upload
+// ---------------------------------------------------------------------------------------------
+
+export interface TrainingTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  config: Partial<TrainingConfig> & Record<string, unknown>;
+  created_by: string;
+  created_at: Timestamp;
+}
+
+export interface TrainingTemplateCreate {
+  name: string;
+  description?: string | null;
+  config: Partial<TrainingConfig> & Record<string, unknown>;
+}
+
+export interface TrainingTemplateApply {
+  name: string;
+  dataset_id: string;
+  dataset_version?: number | null;
+  /** Deep-merged over the template, e.g. `{target: "churn"}`. */
+  overrides?: Record<string, unknown>;
+}
+
+export interface FairnessRequest {
+  /** 1-20 columns. */
+  protected: string[];
+  positive_class?: unknown;
+  min_group_size?: number;
+}
+
+export interface FairnessGroup {
+  group: string;
+  n: number;
+  selection_rate: number | null;
+  base_rate: number | null;
+  tpr: number | null;
+  fpr: number | null;
+  precision: number | null;
+  accuracy: number | null;
+  selection_ratio: number | null;
+  small_group: boolean;
+}
+
+export interface FairnessReport {
+  run_id: string;
+  positive_class: unknown;
+  n_test: number;
+  min_group_size: number;
+  attributes: {
+    attribute: string;
+    grouping: "categories" | "quartiles";
+    groups: FairnessGroup[];
+    demographic_parity_difference: number | null;
+    demographic_parity_ratio: number | null;
+    equalized_odds_difference: number | null;
+    four_fifths_rule: { threshold: number; passed: boolean; flagged_groups: string[] };
+  }[];
+}
+
+export interface ModelSignatureUpload {
+  problem_type: "binary" | "multiclass" | "regression";
+  target?: string;
+  classes?: unknown[];
+  features: { name: string; type: "number" | "integer" | "string" | "boolean"; categories?: unknown[]; min?: number; max?: number }[];
+  input?: "auto" | "per_feature" | "tensor";
+  outputs?: { label?: string; probabilities?: string; value?: string };
+}
+
+export interface ModelUploadResult {
+  model_id: string;
+  name: string;
+  version: number;
+  model_version_id: string;
+  stage: ModelStage;
+  run_id: string;
+  sha256: string;
+  input_mode: string;
+  reference_dataset_id: string | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Serving: anomaly/forecast shapes, streaming, canary, drift
+// ---------------------------------------------------------------------------------------------
+
+export interface AnomalyPrediction {
+  is_anomaly: boolean;
+  score: number;
+}
+
+export interface AnomalyResponse extends PredictResponse<AnomalyPrediction> {
+  threshold: number;
+}
+
+export interface ForecastRequest {
+  /** 1-1000 (default: the trained horizon). */
+  horizon?: number;
+  /** Recent observations `{<time_column>|timestamp, <target>|value}`; the model is refit with them. */
+  history?: Row[];
+}
+
+export interface ForecastResponse {
+  horizon: number;
+  timestamps: string[];
+  predictions: number[];
+  lower: number[];
+  upper: number[];
+  interval_level: number;
+  model_version: { model_id: string; version: number };
+}
+
+export interface StreamPredictRequest extends ForecastRequest {
+  instances?: Row[];
+  explain?: boolean;
+  /** 1-1000 (default 100). */
+  chunk_size?: number;
+}
+
+/** Events of `POST /v1/endpoints/{name}/predict/stream`. */
+export type PredictStreamEvent =
+  | { event: "start"; data: { endpoint: string; total?: number; chunk_size?: number; horizon?: number; model_version?: unknown } }
+  | { event: "prediction"; data: PredictResponse & { offset: number; count: number } }
+  | { event: "forecast"; data: { step: number; timestamp: string; prediction: number; lower: number; upper: number } }
+  | { event: "done"; data: { total?: number; steps?: number; interval_level?: number } };
+
+export interface StreamToken {
+  token: string;
+  expires_in: number;
+  /** Path with the token, e.g. `/v1/endpoints/churn/ws?token=…`. */
+  url: string;
+}
+
+export interface CanaryStart {
+  model_version_id: string;
+  /** Traffic percentages; a final 100 is appended when missing (default [5, 25, 50, 100]). */
+  steps?: number[];
+  step_minutes?: number;
+  max_error_rate?: number;
+  max_p95_ms_increase?: number;
+  min_requests?: number;
+}
+
+export type CanaryStatus = "running" | "completed" | "rolled_back" | "aborted";
+
+export interface CanaryRollout {
+  id: string;
+  endpoint: string;
+  status: CanaryStatus;
+  candidate: EndpointRoute;
+  baseline_routes: EndpointRoute[];
+  steps: number[];
+  step_index: number;
+  weight: number;
+  thresholds: { max_error_rate: number; max_p95_ms_increase: number; min_requests: number };
+  reason: string | null;
+  history: Record<string, unknown>[];
+  step_started_at: Timestamp | null;
+  next_eval_at: Timestamp | null;
+  live?: { canary: Record<string, unknown>; baseline: Record<string, unknown> };
+}
+
+export type DriftStatus = "ok" | "warn" | "alert" | "insufficient_data" | "no_data" | "not_applicable";
+
+export interface DriftReport {
+  endpoint: string;
+  window_hours: number;
+  thresholds: { warn: number; alert: number };
+  min_samples: number;
+  samples: number;
+  status: DriftStatus;
+  model_version: unknown;
+  features: { feature: string; type: string; psi: number | null; status: DriftStatus; bins: unknown[]; expected: number[]; actual: number[]; samples: number }[];
+  prediction: { psi: number | null; status: DriftStatus; bins: unknown[]; expected: number[]; actual: number[] } | null;
+  by_version: Record<string, unknown>;
+}
+
+export interface NotificationPreferences {
+  /** Kinds emailed to the user, e.g. `job.failed`, `endpoint.threshold`, or `*`. */
+  email: string[];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Resumable uploads (ING-NFR-001) and retention (SOC-PRV-002)
+// ---------------------------------------------------------------------------------------------
+
+export interface UploadSession {
+  id: string;
+  filename: string;
+  /** Total bytes declared. */
+  size: number;
+  /** Bytes received so far; the next part starts here. */
+  offset: number;
+  status: "open" | "completing" | "completed" | "aborted" | (string & {});
+  part_max_bytes: number;
+  expires_at: Timestamp;
+  dataset_id?: string | null;
+}
+
+export interface RetentionPolicy {
+  llm_bodies_days: number;
+  llm_metadata_days: number;
+  /** At least 365. */
+  audit_days: number;
+  inference_logs_days: number;
+}
+
+export interface RetentionApplyResult {
+  llm_bodies_redacted: number;
+  usage_rows_deleted: number;
+  prediction_logs_deleted: number;
+  audit_entries_deleted: number;
+  [key: string]: unknown;
+}

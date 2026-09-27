@@ -7,6 +7,10 @@ import type {
   ExperimentDetail,
   ExperimentWithJob,
   Explanation,
+  FairnessReport,
+  FairnessRequest,
+  Projection,
+  ProjectionRequest,
   Row,
   Run,
   RunComparison,
@@ -51,6 +55,27 @@ export class ExperimentsResource extends Resource {
   /** What-if analysis: predictions plus SHAP contributions for arbitrary inputs (1–100 instances). */
   explain(runId: string, instances: Row[], options?: CallOptions): Promise<Explanation> {
     return this.http.request({ method: "POST", path: `/v1/runs/${seg(runId)}/explain`, body: { instances }, ...options });
+  }
+
+  /** Group fairness metrics on the run's held-out test set (XAI-004). */
+  fairness(runId: string, body: FairnessRequest, options?: CallOptions): Promise<FairnessReport> {
+    return this.http.request({ method: "POST", path: `/v1/runs/${seg(runId)}/fairness`, body, ...options });
+  }
+
+  /** 2-D projection through the run's fitted preprocessing, coloured by its predictions (FE-005a). */
+  projection(runId: string, body: ProjectionRequest = {}, options?: CallOptions): Promise<Projection> {
+    return this.http.request({ method: "POST", path: `/v1/runs/${seg(runId)}/projection`, body, ...options });
+  }
+
+  /** Download the model as ONNX (409 `onnx_unsupported` when the pipeline can't be exported). */
+  onnx(runId: string, options?: CallOptions): Promise<ArrayBuffer> {
+    return this.http.request({
+      method: "GET",
+      path: `/v1/runs/${seg(runId)}/onnx`,
+      responseType: "arrayBuffer",
+      ...options,
+      headers: { Accept: "application/octet-stream", ...(options?.headers ?? {}) },
+    });
   }
 
   /** A plain-English summary of the model, written by the tenant's LLM. */

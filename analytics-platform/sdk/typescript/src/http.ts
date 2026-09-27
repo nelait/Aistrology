@@ -10,7 +10,8 @@ import {
   createApiError,
   parseRetryAfter,
 } from "./errors.js";
-import type { TokenPair } from "./types.js";
+import { parseSSE, type ServerSentEvent } from "./sse.js";
+import type { ClientCredentialsToken, TokenPair } from "./types.js";
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -32,6 +33,14 @@ export interface ClientOptions {
   refreshToken?: string;
   /** Called after login and after every refresh with the new pair, so callers can persist it. */
   onTokens?: (tokens: TokenPair) => void | Promise<void>;
+  /**
+   * OAuth 2.0 client credentials (MGT-004a): the client fetches access tokens from `POST /oauth/token`
+   * itself, renews them shortly before they expire and once more on a 401. Ignored when `apiKey` is set.
+   */
+  clientId?: string;
+  clientSecret?: string;
+  /** Optional scopes to request (narrowing the OAuth client's role). */
+  scope?: string | string[];
   /** Custom fetch implementation (defaults to the global `fetch`). */
   fetch?: FetchLike;
   /** Per-attempt timeout in milliseconds (default 60 000). `0` disables it. */
@@ -69,12 +78,19 @@ export interface RequestSpec extends CallOptions {
   responseType?: ResponseType;
   /** Send credentials (default true). */
   auth?: boolean;
+  /**
+   * Whether the request can be repeated safely, so 5xx responses and timeouts are retried. Defaults to
+   * true for GET/PUT/DELETE and false otherwise (then only 429/503 are retried).
+   */
+  idempotent?: boolean;
 }
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 /** A POST/PATCH may already have taken effect, so only retry when the server says it did not. */
 const RETRYABLE_UNSAFE_STATUS = new Set([429, 503]);
 const IDEMPOTENT = new Set<HttpMethod>(["GET", "PUT", "DELETE"]);
+/** Renew client-credentials tokens this long before they expire. */
+const TOKEN_RENEWAL_MARGIN_MS = 30_000;
 
 export class HttpClient {
   readonly baseUrl: string;
@@ -89,6 +105,11 @@ export class HttpClient {
   private readonly maxRetryDelayMs: number;
   private readonly defaultHeaders: Record<string, string>;
   private refreshing: Promise<TokenPair> | null = null;
+  private readonly clientId: string | undefined;
+  private readonly clientSecret: string | undefined;
+  private readonly scope: string | undefined;
+  private tokenExpiresAt = 0;
+  private fetchingToken: Promise<ClientCredentialsToken> | null = null;
 
   constructor(options: ClientOptions) {
     if (!options || !options.baseUrl) throw new AnalyticsPlatformError("baseUrl is required");
@@ -97,6 +118,9 @@ export class HttpClient {
     this.accessToken = options.accessToken;
     this.refreshToken = options.refreshToken;
     this.onTokens = options.onTokens;
+    this.clientId = options.clientId;
+    this.clientSecret = options.clientSecret;
+    this.scope = Array.isArray(options.scope) ? options.scope.join(" ") : options.scope;
     const f = options.fetch ?? (typeof fetch === "function" ? fetch : undefined);
     if (!f) throw new AnalyticsPlatformError("no fetch implementation available; pass options.fetch");
     // Never call fetch as a method of this object (browsers throw "Illegal invocation").
@@ -160,8 +184,48 @@ export class HttpClient {
     return p;
   }
 
+  /** True when the client authenticates with OAuth client credentials. */
+  get usesClientCredentials(): boolean {
+    return !this.apiKey && !!this.clientId && !!this.clientSecret;
+  }
+
+  /** Fetch a client-credentials token now (normally automatic). Concurrent callers share one request. */
+  clientCredentialsToken(): Promise<ClientCredentialsToken> {
+    if (this.fetchingToken) return this.fetchingToken;
+    if (!this.clientId || !this.clientSecret) {
+      return Promise.reject(new AnalyticsPlatformError("clientId and clientSecret are required for the client credentials grant"));
+    }
+    const form = new URLSearchParams({ grant_type: "client_credentials", client_id: this.clientId, client_secret: this.clientSecret });
+    if (this.scope) form.set("scope", this.scope);
+    const run = async (): Promise<ClientCredentialsToken> => {
+      try {
+        const token = await this.request<ClientCredentialsToken>({
+          method: "POST",
+          path: "/oauth/token",
+          rawBody: form.toString(),
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          auth: false,
+          // Issuing a token has no side effects.
+          idempotent: true,
+        });
+        this.accessToken = token.access_token;
+        this.tokenExpiresAt = Date.now() + (token.expires_in ?? 900) * 1000;
+        return token;
+      } catch (err) {
+        this.accessToken = undefined;
+        this.tokenExpiresAt = 0;
+        throw err;
+      }
+    };
+    const p = run().finally(() => {
+      if (this.fetchingToken === p) this.fetchingToken = null;
+    });
+    this.fetchingToken = p;
+    return p;
+  }
+
   private usesUserTokens(spec: RequestSpec): boolean {
-    return spec.auth !== false && !this.apiKey;
+    return spec.auth !== false && !this.apiKey && !this.usesClientCredentials;
   }
 
   private authHeaders(spec: RequestSpec): { headers: Record<string, string>; token: string | undefined } {
@@ -199,6 +263,9 @@ export class HttpClient {
     let refreshed = false;
     let attempt = 0;
 
+    const idempotent = spec.idempotent ?? IDEMPOTENT.has(spec.method);
+    const clientCredentials = spec.auth !== false && this.usesClientCredentials;
+
     // A session that only has a refresh token (e.g. restored from storage) refreshes first.
     if (this.usesUserTokens(spec) && !this.accessToken && this.refreshToken) {
       await this.refresh();
@@ -207,6 +274,9 @@ export class HttpClient {
 
     for (;;) {
       throwIfAborted(spec.signal);
+      if (clientCredentials && (!this.accessToken || Date.now() >= this.tokenExpiresAt - TOKEN_RENEWAL_MARGIN_MS)) {
+        await this.clientCredentialsToken();
+      }
       const { headers: authHeaders, token: sentToken } = this.authHeaders(spec);
       const headers: Record<string, string> = { Accept: "application/json", ...this.defaultHeaders, ...authHeaders, ...(spec.headers ?? {}) };
       let body: BodyInit | undefined;
@@ -224,7 +294,7 @@ export class HttpClient {
         if (isAbort(err, spec.signal)) throw err;
         // Timeouts are ambiguous for unsafe methods (the server may have acted); a failure with no
         // response at all (connection refused/reset) is retried for every method.
-        const retryable = err instanceof TimeoutError ? IDEMPOTENT.has(spec.method) : true;
+        const retryable = err instanceof TimeoutError ? idempotent : true;
         if (retryable && attempt < maxRetries) {
           await sleep(this.backoff(attempt), spec.signal);
           attempt++;
@@ -236,6 +306,14 @@ export class HttpClient {
 
       if (response.ok) return response;
 
+      // 401 with client credentials: the token may have been revoked or the key rotated; fetch a new one once.
+      if (response.status === 401 && clientCredentials && !refreshed) {
+        refreshed = true;
+        await discard(response);
+        if (this.accessToken === sentToken) this.accessToken = undefined;
+        continue;
+      }
+
       // 401 with user tokens: refresh once, then replay the request.
       if (response.status === 401 && this.usesUserTokens(spec) && !refreshed && (this.refreshToken || this.accessToken !== sentToken)) {
         refreshed = true;
@@ -245,7 +323,7 @@ export class HttpClient {
         continue;
       }
 
-      const retryable = IDEMPOTENT.has(spec.method)
+      const retryable = idempotent
         ? RETRYABLE_STATUS.has(response.status)
         : RETRYABLE_UNSAFE_STATUS.has(response.status);
       if (retryable && attempt < maxRetries) {
@@ -258,6 +336,16 @@ export class HttpClient {
 
       throw await this.toError(response, spec.method, url);
     }
+  }
+
+  /**
+   * Send the request and iterate over its `text/event-stream` body. Auth, refresh and retries apply until
+   * the response starts; aborting `spec.signal` cancels the stream.
+   */
+  async *events(spec: RequestSpec): AsyncGenerator<ServerSentEvent, void, undefined> {
+    const response = await this.send({ ...spec, headers: { Accept: "text/event-stream", ...(spec.headers ?? {}) } });
+    if (!response.body) return;
+    yield* parseSSE(response.body, spec.signal);
   }
 
   /** Exponential backoff with jitter: a random delay in [d/2, d], d = base * 2^attempt, capped. */
@@ -325,7 +413,12 @@ export class HttpClient {
     } catch {
       body = undefined;
     }
-    const detail = body && typeof body === "object" && !Array.isArray(body) && "detail" in body ? (body as { detail: unknown }).detail : body;
+    let detail = body && typeof body === "object" && !Array.isArray(body) && "detail" in body ? (body as { detail: unknown }).detail : body;
+    // RFC 6749 errors from /oauth/token: {error, error_description}.
+    if (detail && typeof detail === "object" && !Array.isArray(detail) && typeof (detail as { error?: unknown }).error === "string") {
+      const oauth = detail as { error: string; error_description?: string };
+      detail = { code: oauth.error, message: oauth.error_description ?? oauth.error };
+    }
     return createApiError({ status: response.status, detail: detail ?? response.statusText, body, headers: response.headers, method, url });
   }
 }
