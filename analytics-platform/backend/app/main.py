@@ -6,7 +6,7 @@ import logging
 
 from fastapi import FastAPI
 
-from .api import auth, datasets, jobs, pipelines, schemas, tenant
+from .api import auth, datasets, jobs, pipelines, schemas, tenant, training
 from .api.deps import AppState, build_state
 from .jobs import handlers  # noqa: F401 - registers job handlers
 from .jobs.core import Worker
@@ -21,7 +21,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
         description="Schemas & sample data, ingestion, profiling, cleaning, analytics, model training, serving and dashboards.",
     )
     app.state.ap = state or build_state()
-    for module in (auth, tenant, schemas, datasets, pipelines, jobs):
+    for module in (auth, tenant, schemas, datasets, pipelines, jobs, training):
         app.include_router(module.router)
 
     if app.state.ap.settings.inline_worker and "worker" not in app.state.ap.extras:

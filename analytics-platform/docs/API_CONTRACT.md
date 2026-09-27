@@ -1,0 +1,162 @@
+# API Contract (v1)
+
+The shared contract between the backend and the frontend/SDKs. The FastAPI app also serves the full OpenAPI document at `/openapi.json`.
+
+## Authentication
+- `POST /v1/auth/signup` `{tenant_id, org_name, email, password, name?, region: "us"|"eu"}` returns `{tenant_id, user_id}`.
+- `POST /v1/auth/login` `{email, password, totp?}` returns `{access_token, refresh_token, expires_in, token_type}`.
+  - On a 401, `detail.code` is one of `invalid_credentials`, `locked`, `mfa_required`, `mfa_invalid`, `mfa_enrollment_required` or `disabled`.
+- `POST /v1/auth/refresh` `{refresh_token}` returns a new token pair. Refresh tokens rotate: each one can be used once.
+- `POST /v1/auth/logout` `{refresh_token}`.
+- `GET /v1/auth/me` returns `{tenant_id, id, role, method, email?, name?, mfa_enabled?}`.
+- `POST /v1/auth/mfa/setup` returns `{otpauth_uri}`. `POST /v1/auth/mfa/activate` `{code}`.
+- Every other call sends `Authorization: Bearer <access_token>`, or an API key as `X-API-Key: ap_live_…` / `Authorization: Bearer ap_live_…`.
+- Roles: `admin`, `data_engineer`, `data_scientist`, `analyst`, `viewer`.
+
+## Tenant admin (`/v1/tenant`)
+- `GET` / `PATCH` / `DELETE ?confirm=<tenant>` on `/v1/tenant` itself.
+- `/users`: GET, POST `{email, role, password, name?}`; `/users/{id}`: PATCH `{role?, disabled?}`.
+- `/api-keys`: GET, POST `{name, role, scopes[], rate_limit_per_minute, expires_in_days?, allowed_ips[]}` returns `{key, …}` with the key shown once. `/api-keys/{id}/rotate`: POST. `/api-keys/{id}`: DELETE.
+- `/llm-config`: GET/PUT `{chain: [{kind: openai|openai_compatible|anthropic|gemini|mock, model?, base_url?, secret_name?}], data_minimization: L0|L1|L2|L3, cache_enabled}`.
+- `/secrets/{name}`: PUT `{value}` or DELETE. `/secrets`: GET returns `{names}`.
+- `/llm-usage`, `/usage`, `/audit?action=`, `/audit/verify`: GET.
+- `/exports`: POST returns a job. `/exports/{job_id}`: GET returns the zip.
+
+## Schemas and sample data
+- `POST /v1/schemas/parse` `{format: json_schema|xsd|natural_language, content, current?}` returns `{schema, warnings, json_schema}`.
+- `POST /v1/schemas/validate` with a schema body.
+- `POST /v1/generate/preview` `{schema, options: {count, counts, seed, children_per_parent, null_rate}}` returns `{planned_rows, entities: {name: rows[]}}`.
+- `POST /v1/generate` `{schema, options, format: csv|json|jsonl|parquet|sql, save_as?}` returns one of:
+  - a file download,
+  - a DatasetRecord (when `save_as` is given),
+  - a 202 job (when the run is too large for a synchronous request).
+
+### Canonical schema
+`{name, entities: [{name, fields: [Field]}]}`, where a Field is:
+
+```
+{name, type: string|integer|number|boolean|date|datetime|array, items_type?, nullable,
+ primary_key, unique, enum?, minimum?, maximum?, min_length?, max_length?, pattern?,
+ semantic?, role?, pii, references?: {entity, field}, description?, source_name?}
+```
+
+## Datasets (`/v1/datasets`)
+- `POST` (multipart `file`) or `PUT /upload?filename=` (raw body) returns `{dataset: DatasetRecord, inference: {schema, columns[], sampled_rows, warnings[]}}`.
+- `GET` (list) and `GET /{id}?version=`. `GET /{id}/versions`. `DELETE /{id}`.
+- `PUT /{id}/schema` with a Schema body, to confirm the inferred schema.
+- `GET /{id}/profile?version=` returns a DatasetProfile:
+  - `row_count`, `column_count`, `duplicate_row_count`, `correlations`, `warnings`.
+  - `columns[]`: name, type, role, count, null_count, null_fraction, distinct_count, min, max, mean, median, std, percentiles, histogram `{edges, counts}`, outliers `{iqr_count, iqr_bounds, zscore_count}`, top_values `[[v, n]]`, type_mismatch.
+  - `quality`: `{score, completeness, uniqueness, validity, consistency, formula}`.
+- `POST /{id}/query?version=` `{sql, row_limit}` returns `{columns, rows, row_count, truncated}`. The main table is called `data`.
+- `POST /{id}/suggestions` `{question?}` returns a list of `{title, category, chart_type, x, y, aggregation, group_by, rationale, sql, valid, validation_error, preview}`.
+
+DatasetRecord: `{id, tenant_id, name, version, latest_version, parent_version, pipeline_id, source, created_at, created_by, tables: [{name, file, format, size_bytes, sha256, row_count?}], schema, size_bytes}`.
+
+## Cleaning pipelines (`/v1/pipelines`)
+- `POST` `{dataset_id, name, steps[]}`. `GET ?dataset_id=`. `GET /templates`. `POST /from-template` `{template_id, dataset_id}`.
+- `GET /{id}`. `POST /{id}/steps` `{step}`. `POST /{id}/undo`, `POST /{id}/redo`.
+- `POST /{id}/preview` `{step?, rows}` returns `{sample_rows, rows, columns, step_stats[], column_deltas[]}`.
+- `POST /{id}/template` `{name}`. `POST /{id}/apply` returns a job; its result is `{dataset_id, version, parent_version, rows, step_stats}`.
+- Every step has an `op`:
+
+| op | Fields |
+|----|--------|
+| `drop_missing` | `axis`, `columns`, `how`, `max_null_fraction` |
+| `fill_missing` | `columns`, `strategy`: mean \| median \| mode \| constant \| ffill \| bfill \| interpolate, `value` |
+| `handle_outliers` | `columns`, `method`: iqr \| zscore, `threshold`, `action`: remove \| cap \| flag |
+| `deduplicate` | `columns`, `keep` |
+| `cast` | `column`, `to`, `format`, `on_error` |
+| `normalize_strings` | `columns`, `trim`, `case`, `find`, `replace`, `collapse_whitespace` |
+| `normalize_dates` | `column`, `formats[]`, `output`, `dayfirst` |
+| `rename` | `mapping` |
+| `drop_columns` | `columns` |
+| `reorder` | `columns` |
+| `split` | `column`, `separator`, `into[]`, `drop_original` |
+| `merge` | `columns`, `into`, `separator`, `drop_original` |
+| `derive` | `name`, `expression` (SQL expression) |
+| `filter` | `condition` (SQL condition) |
+| `mask_pii` | `columns`, `strategy`: partial \| hash \| redact |
+
+## Jobs and notifications
+- `GET /v1/jobs?status=`, `GET /v1/jobs/{id}`, `POST /v1/jobs/{id}/cancel`.
+  - Job: `{id, type, status: queued|running|succeeded|failed|cancelled, progress 0..1, message, params, result, error, attempts, created_at, started_at, finished_at}`.
+- `GET /v1/notifications?unread_only=`, `POST /v1/notifications/{id}/read`.
+
+## Model Training Studio
+- `GET /v1/algorithms` returns `[{id, name, family, problem_types[], hyperparameters: [{name, type, default, min?, max?, choices?, log?, help}]}]`.
+- `POST /v1/experiments/detect` `{dataset_id, target}` returns `{problem_type, reason, classes?}`.
+- `POST /v1/experiments` creates an experiment and a training job, and returns `{experiment, job}`. Body:
+
+```
+{name, dataset_id, dataset_version?, target, features?: string[],
+ problem_type?: binary|multiclass|regression,
+ split: {method: random|stratified|time, test_size: 0.2, validation_size: 0.0, time_column?},
+ cv: {method: kfold|stratified_kfold|timeseries, folds: 5},
+ algorithms?: string[],
+ automl: {enabled: true, strategy: random|grid|tpe, n_trials: 20, timeout_seconds: 300},
+ hyperparameters?: {algorithm_id: {param: value}},
+ preprocessing: {encoding: onehot|ordinal|target, scaling: standard|minmax|robust|log|none,
+                 impute: median|mean|most_frequent,
+                 feature_selection?: {method: mutual_info|correlation|rfe|l1, k}},
+ class_imbalance: none|class_weight|smote|undersample|oversample,
+ max_training_seconds: 600, seed: 42}
+```
+
+- `GET /v1/experiments`. `GET /v1/experiments/{id}` returns `{experiment, runs[]}`.
+- `GET /v1/runs/{id}` returns a run:
+  - `{id, experiment_id, status, algorithm, params, metrics, duration_seconds, artifacts}`.
+  - `artifacts` holds `leaderboard[]`, `confusion_matrix`, `roc_curve {fpr, tpr}`, `pr_curve {precision, recall}`, `calibration {prob_pred, prob_true}`, `residuals {predicted, residual}`, `learning_curve {train_sizes, train_scores, val_scores}`, `feature_importance [{feature, importance}]`, `permutation_importance [...]`, `shap_summary [{feature, mean_abs_shap}]`, `pdp {feature: {grid, average}}`, `explanation_text?`.
+- `GET /v1/experiments/compare?run_ids=a,b` returns `{runs: [...], metrics: [names]}`.
+- `POST /v1/runs/{id}/explain` `{instances: [{feature: value}]}` returns `{predictions, shap: [{feature: value}], base_value}` (what-if analysis).
+
+## Model registry
+- `POST /v1/models` `{name, run_id, description?}` registers a new version.
+- `GET /v1/models`. `GET /v1/models/{id}` returns `{model, versions: [{version, stage, run_id, metrics, signature, created_at}]}`.
+- `POST /v1/models/{id}/versions/{version}/stage` `{stage: none|staging|production|archived}`.
+
+## Serving and API gateway
+- `POST /v1/endpoints` `{name, model_id, version?, routes?: [{model_version_id, weight}], min_replicas?, log_payloads?, cors_origins?}`.
+- `GET /v1/endpoints`. `GET`, `PATCH` (routes and settings) and `DELETE` on `/v1/endpoints/{name}`.
+- `POST /v1/endpoints/{name}/predict` `{instances: [{…}], explain?: bool}` returns `{predictions, probabilities?, classes?, model_version, explanations?}`.
+- `POST /v1/endpoints/{name}/batch` (multipart `file`, or `{dataset_id}`) returns a job. `GET /v1/endpoints/{name}/batch/{job_id}` downloads the CSV.
+- `GET /v1/endpoints/{name}/openapi.json`.
+- `GET /v1/endpoints/{name}/metrics` returns `{requests, errors, p50_ms, p95_ms, p99_ms, by_version}`.
+
+## Saved analytics
+- `POST /v1/analytics` `{dataset_id, name, sql, chart: {type, x, y, series?, aggregation?}, parameters: [{name, type: string|number|date, default}]}`.
+- `GET /v1/analytics`, `GET` / `DELETE` on `/v1/analytics/{id}`.
+- `POST /v1/analytics/{id}/run` `{params: {name: value}}` returns `{columns, rows}`. Parameters are referenced as `:name` in the SQL.
+
+## Dashboards
+- `POST /v1/dashboards` `{name, spec}`. `GET /v1/dashboards?archived=`.
+- `GET`, `PUT {name?, spec?}` and `DELETE` on `/v1/dashboards/{id}`.
+- `POST /v1/dashboards/{id}/clone`, `/archive`, `/share {user_id, role: editor|viewer}`.
+- `POST /v1/dashboards/{id}/widgets/{widget_id}/data` `{filters: {column: value | [values] | {min, max}}}` returns `{columns, rows}`.
+- `GET /v1/dashboards/{id}/export?format=html|json`.
+- `GET /v1/dashboards/templates`.
+- `spec`:
+
+```
+{ "pages": [ { "id": "p1", "title": "Overview",
+      "widgets": [ { "id": "w1", "type": "chart|kpi|table|text|filter|image|prediction|alert",
+                     "title": "...", "layout": {"x":0,"y":0,"w":6,"h":4},
+                     "config": { "analytic_id?": "...", "dataset_id?": "...", "sql?": "...",
+                                 "chart?": {"type":"bar|line|area|scatter|pie|heatmap|histogram|box|treemap|funnel|gauge|sankey|waterfall",
+                                            "x":"col","y":"col","series?":"col","aggregation?":"sum|avg|count|min|max"},
+                                 "kpi?": {"value":"col","target?":123,"trend?":"col"},
+                                 "text?": "markdown", "image_url?": "...",
+                                 "filter?": {"column":"region","kind":"dropdown|multiselect|slider|date","dataset_id":"..."},
+                                 "endpoint?": "name", "thresholds?": [{"op":">","value":100,"color":"red"}],
+                                 "conditional_format?": [{"column":"x","op":">","value":1,"color":"#f00"}] } } ] } ],
+  "filters": [ {"id":"f1","column":"region","kind":"multiselect","default":[]} ],
+  "date_range": {"column":"order_date","default":"last_90_days"},
+  "theme": {"mode":"light|dark","primary":"#4f46e5"},
+  "refresh_seconds": 300 }
+```
+
+## Webhooks
+- `POST /v1/webhooks` `{url, events: ["job.succeeded","job.failed","model.registered","endpoint.threshold",…]}` returns `{id, secret}`, with the secret shown once.
+- `GET /v1/webhooks`. `DELETE /v1/webhooks/{id}`.
+- `GET /v1/webhooks/{id}/deliveries`. `POST /v1/webhooks/deliveries/{id}/retry`.
+- Deliveries are signed with a header `X-AP-Signature: t=<unix>,v1=<hex hmac-sha256(secret, t + "." + body)>`.
