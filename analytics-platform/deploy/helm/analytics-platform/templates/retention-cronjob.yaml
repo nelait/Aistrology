@@ -1,0 +1,51 @@
+{{- if .Values.retention.enabled }}
+# SOC-PRV-002: apply every organization's retention policy (python -m app.retention).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "ap.fullname" . }}-retention
+  labels:
+    {{- include "ap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: retention
+spec:
+  schedule: {{ .Values.retention.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: {{ .Values.retention.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "ap.labels" . | nindent 12 }}
+            app.kubernetes.io/component: retention
+          annotations:
+            checksum/env: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "ap.serviceAccountName" . }}
+          automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: retention
+              image: {{ include "ap.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["python", "-m", "app.retention"]
+              envFrom:
+                {{- include "ap.envFrom" . | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              resources:
+                {{- toYaml .Values.retention.resources | nindent 16 }}
+              volumeMounts:
+                {{- include "ap.volumeMounts" . | nindent 16 }}
+          volumes:
+            {{- include "ap.volumes" . | nindent 12 }}
+{{- end }}

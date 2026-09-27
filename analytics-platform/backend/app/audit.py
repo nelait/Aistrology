@@ -28,8 +28,45 @@ class AuditEntry(BaseModel):
     hash: str
 
 
+# Detail fields that the retention policy may later erase (SOC-PRV-002, Appendix B: LLM bodies after 30 days).
+# The chain hashes a commitment (SHA-256) of each such value instead of the value itself, so erasing the value
+# and keeping its commitment leaves the chain verifiable. Entries list their committed fields in ``_redactable``.
+REDACTABLE = ("prompt_excerpt", "error")
+
+
+def _commit(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def redacted(value: Any) -> dict[str, Any]:
+    """What an erased field is replaced with: its commitment, without the content."""
+    if isinstance(value, dict) and value.get("redacted") is True:
+        return value
+    return {"redacted": True, "sha256": _commit(value)}
+
+
+def _hashable(payload: dict[str, Any]) -> dict[str, Any]:
+    detail = payload.get("detail")
+    if not isinstance(detail, dict) or not detail.get("_redactable"):
+        return payload
+    detail = dict(detail)
+    for key in detail["_redactable"]:
+        if key in detail:
+            value = detail[key]
+            detail[key] = {"commit": value["sha256"] if isinstance(value, dict) and value.get("redacted") is True else _commit(value)}
+    return {**payload, "detail": detail}
+
+
 def _digest(payload: dict[str, Any]) -> str:
-    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(_hashable(payload), sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _mark_redactable(action: str, detail: dict[str, Any]) -> dict[str, Any]:
+    if action == "llm.call":
+        keys = [k for k in REDACTABLE if detail.get(k) is not None]
+        if keys:
+            return {**detail, "_redactable": keys}
+    return detail
 
 
 class AuditLog:
@@ -40,6 +77,7 @@ class AuditLog:
         self._lock = threading.Lock()
 
     def record(self, tenant_id: str, actor: str, action: str, **detail: Any) -> AuditEntry:
+        detail = _mark_redactable(action, detail)
         with self._lock:
             prev = self._entries[-1].hash if self._entries else self.GENESIS
             body = {
@@ -86,7 +124,7 @@ class DbAuditLog(AuditLog):
 
         from .db.models import AuditRecord
 
-        detail = json.loads(json.dumps(detail, default=str))
+        detail = _mark_redactable(action, json.loads(json.dumps(detail, default=str)))
         for _ in range(5):
             with self._lock:
                 try:
@@ -137,14 +175,23 @@ class DbAuditLog(AuditLog):
         ]
         return entries[-limit:] if limit else entries
 
+    def anchor(self, tenant_id: str) -> dict[str, Any] | None:
+        """The last entry removed by retention (``{seq, hash}``); the remaining chain continues from it."""
+        from .db.models import TenantSetting
+
+        with self.db.session(tenant_id) as s:
+            row = s.get(TenantSetting, (tenant_id, "audit_anchor"))
+            return dict(row.value) if row else None
+
     def verify(self, tenant_id: str | None = None) -> bool:
         chains: dict[str, list[AuditEntry]] = {}
         for e in self.entries(tenant_id):
             chains.setdefault(e.tenant_id, []).append(e)
-        for chain in chains.values():
-            prev = self.GENESIS
+        for tenant, chain in chains.items():
+            anchor = self.anchor(tenant)
+            prev, seq = (anchor["hash"], anchor["seq"] + 1) if anchor else (self.GENESIS, 0)
             for entry in chain:
-                if entry.prev_hash != prev or _digest(entry.model_dump(exclude={"hash"})) != entry.hash:
+                if entry.seq != seq or entry.prev_hash != prev or _digest(entry.model_dump(exclude={"hash"})) != entry.hash:
                     return False
-                prev = entry.hash
+                prev, seq = entry.hash, seq + 1
         return True

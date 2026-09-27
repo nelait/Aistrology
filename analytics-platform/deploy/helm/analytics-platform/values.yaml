@@ -120,6 +120,18 @@ api:
   tolerations: []
   affinity: {}
 
+# SOC-PRV-002: daily sweep applying each organization's retention policy (Appendix B defaults).
+retention:
+  enabled: true
+  schedule: "17 3 * * *"
+  activeDeadlineSeconds: 3600
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
 worker:
   enabled: true
   replicaCount: 2

@@ -34,6 +34,7 @@ flowchart LR
 - **One image, two processes.** The API and the job worker share one container image. The worker pulls job IDs from the queue; the database row is the source of truth for job status, progress and results.
 - **Schedules.** Workers also tick the scheduler (`app/jobs/scheduler.py`, or standalone `python -m app.jobs.scheduler`), which submits due cron schedules as jobs. Each run is claimed with a conditional update of `next_run_at`, so every replica can tick without submitting a run twice.
 - **The cloud is a configuration choice.** `AP_CLOUD_PROVIDER=local|gcp|aws` selects implementations of four interfaces in `app/cloud/base.py`: `ObjectStore`, `SecretStore`, `KeyManager` and `Queue`. No other module imports a cloud SDK. Adding a provider (for example Azure) means implementing those four interfaces plus a branch in `app/cloud/factory.py`. Terraform in `infra/terraform/{modules,envs}/{gcp,aws}` outputs exactly the `AP_*` environment variables the app reads.
+- **Retention.** A daily CronJob (`python -m app.retention`) applies each organization's retention policy. Expired LLM bodies in the audit log are replaced by their hash commitment, and expired audit entries are cut from the oldest end with a stored anchor, so the chain still verifies.
 - **Single-node analytics.** Decision D3 caps datasets at 1 GB, so DuckDB, pandas and scikit-learn run inside the API or worker process. There is no Spark.
 
 ## Tenancy and security
@@ -82,6 +83,12 @@ flowchart LR
 | `cloud/` | Provider-neutral storage, secrets, KMS and queue, plus per-tenant envelope encryption |
 | `auth/` | Identity, RBAC, OIDC |
 | `db/` | SQLAlchemy models and sessions (RLS on Postgres) |
+| `connectors/` | Database and warehouse connectors (SSRF-guarded) |
+| `streams.py` | Streaming ingestion: buffered micro-batches compacted into dataset versions |
+| `scheduling/` | The allowlist of schedulable job types, and scheduled deliveries |
+| `notify/`, `webhooks.py`, `inbound_hooks.py` | In-app, email and chat notifications; outgoing and incoming webhooks |
+| `comments.py`, `projects.py`, `public_links.py` | Collaboration, project membership, public dashboard links |
+| `retention.py` | Per-tenant retention policies and the daily sweep (SOC-PRV-002) |
 | `api/` | FastAPI routers; `deps.py` wires `AppState` from settings |
 
 ## Scaling notes

@@ -733,4 +733,23 @@ class CanaryRollout(Base):
     finished_at: Mapped[datetime | None] = mapped_column(TS)
 
 
+class UploadSession(Base):
+    """A resumable upload in progress (ING-002, ING-NFR-001). Parts live encrypted in object storage."""
+
+    __tablename__ = "upload_sessions"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("up"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    size: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    project_id: Mapped[str | None] = mapped_column(String(40))
+    dataset_id: Mapped[str | None] = mapped_column(String(40))  # the target dataset for a new version, then the result
+    received: Mapped[int] = mapped_column(BigInteger, default=0)
+    parts: Mapped[list[Any]] = mapped_column(JSON, default=list)  # [[offset, length, object key], ...]
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open|completing|completed|aborted
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(TS)
+
+
 TENANT_TABLES = [t for t in Base.metadata.sorted_tables if "tenant_id" in t.columns and t.name != "tenants"]

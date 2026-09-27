@@ -125,6 +125,9 @@ class Settings:
     # ING-008: a stream buffer is compacted into a new dataset version once it holds this many rows or bytes.
     stream_compact_rows: int = field(default_factory=lambda: int(_env("AP_STREAM_COMPACT_ROWS", "10000")))
     stream_compact_bytes: int = field(default_factory=lambda: int(_env("AP_STREAM_COMPACT_BYTES", str(16 * 1024 * 1024))))
+    # ING-NFR-001: resumable uploads. Each PATCH carries at most this many bytes; idle sessions expire.
+    upload_part_max_bytes: int = field(default_factory=lambda: int(_env("AP_UPLOAD_PART_MAX_BYTES", str(32 * 1024 * 1024))))
+    upload_session_ttl_hours: int = field(default_factory=lambda: int(_env("AP_UPLOAD_SESSION_TTL_HOURS", "24")))
 
 
 def load_settings() -> Settings:

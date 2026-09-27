@@ -36,6 +36,9 @@ The shared contract between the backend and the frontend/SDKs. The FastAPI app a
 - `/secrets/{name}`: PUT `{value}` or DELETE. `/secrets`: GET returns `{names}`.
 - `/llm-usage`, `/usage`, `/audit?action=`, `/audit/verify`: GET.
 - `/exports`: POST returns a job. `/exports/{job_id}`: GET returns the zip.
+- `/retention` (SOC-PRV-002): GET/PUT `{llm_bodies_days: 30, llm_metadata_days: 395, audit_days: 395 (≥ 365), inference_logs_days: 30}`. `/retention/apply`: POST applies the policy now and returns `{llm_bodies_redacted, usage_rows_deleted, prediction_logs_deleted, audit_entries_deleted}`. A daily CronJob (`python -m app.retention`) applies it for every organization.
+  - Expired LLM bodies (`prompt_excerpt`/`error` in `llm.call` audit entries) are replaced by `{redacted: true, sha256}`. The chain hashes a commitment of those fields, so `/audit/verify` stays valid.
+  - Expired audit entries are deleted from the oldest end, and verification continues from the stored anchor.
 
 ## Schemas and sample data
 - `POST /v1/schemas/parse` `{format: json_schema|xsd|natural_language, content, current?}` returns `{schema, warnings, json_schema}`.
@@ -57,6 +60,11 @@ The shared contract between the backend and the frontend/SDKs. The FastAPI app a
 
 ## Datasets (`/v1/datasets`)
 - `POST` (multipart `file`) or `PUT /upload?filename=` (raw body) returns `{dataset: DatasetRecord, inference: {schema, columns[], sampled_rows, warnings[]}}`.
+- **Resumable uploads** (ING-002, ING-NFR-001; recommended above 100 MB), modelled on tus:
+  1. `POST /uploads` `{filename, size, sha256?, project_id?}` returns 201 `{id, filename, size, offset, status, part_max_bytes, expires_at}`. The size limit and storage quota are checked here: 413 / 507.
+  2. `PATCH /uploads/{id}` sends the next part as the raw body, with header `Upload-Offset: <bytes already received>`, at most `part_max_bytes` (default 32 MB). It returns the new status and an `Upload-Offset` header. A wrong offset gets 409 with `detail.offset` and an `Upload-Offset` header, so the client resumes from there. `GET /uploads/{id}` also reports the offset.
+  3. `POST /uploads/{id}/complete` returns 201 with the same body as a single-shot upload. It is idempotent after success. It returns 409 while bytes are missing, and 422 (the session is discarded) on a checksum or format failure.
+  - `DELETE /uploads/{id}` aborts. Sessions belong to the user who started them and expire after `AP_UPLOAD_SESSION_TTL_HOURS` (default 24), after which they return 410. Parts are stored encrypted with the tenant key and deleted on completion, abort or expiry. At most 20 open sessions per organization.
 - `GET` (list) and `GET /{id}?version=`. `GET /{id}/versions`. `DELETE /{id}`.
 - `PUT /{id}/schema` with a Schema body, to confirm the inferred schema.
 - `GET /{id}/profile?version=` returns a DatasetProfile:

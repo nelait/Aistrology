@@ -1,70 +1,81 @@
 # Analytics Platform
 
-An AI-assisted, multi-tenant SaaS analytics platform: raw data → profiled and cleaned data → LLM-suggested analytics → trained models → APIs and dashboards.
-
-- **Requirements:** [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) (v1.2; its §15 lists what changed from v1.1)
-- **Backend:** [`backend/`](backend/) (Python 3.11+, FastAPI, DuckDB, pandas)
+An AI-assisted, multi-tenant SaaS analytics platform. It takes raw data through profiling and cleaning to LLM-suggested analytics, trained models, and finally APIs and dashboards.
 
 > This project is self-contained and unrelated to the Shastri astrology app in the rest of this repository. It lives here only until it gets its own repo.
 
-## What's built so far (Phase 1 foundations)
+| Doc | What's in it |
+|-----|--------------|
+| [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) | Requirements v1.2; §15 lists what changed from v1.1 |
+| [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) | What is built per module and phase, and what is not built yet, with reasons |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Topology, cloud abstraction, security layers, module map |
+| [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | Every REST endpoint. The live OpenAPI document is at `/docs` |
 
-| Area | Requirements | Where |
-|------|-------------|-------|
-| Canonical schema model, validation, JSON Schema export | SCH-007/008/009/011 | `app/schema/model.py` |
-| JSON Schema parser (`$ref`, nested objects, arrays → child entities, `x-*` extensions) | SCH-001 | `app/schema/json_schema.py` |
-| XSD parser (documented subset, DTD/XXE rejected) | SCH-002, SEC-011 | `app/schema/xsd.py` |
-| Natural-language → schema via the LLM layer, with one repair retry | SCH-003, NLP-001/004/006 | `app/schema/natural_language.py` |
-| Seeded, prefix-stable sample-data generator (constraints, unique, FKs, self-references, realistic values, 1 GB estimate) | GEN-001…005/007/010, SCH-NFR-004 | `app/generation/` |
-| Export to CSV / JSON / JSONL / Parquet / SQL INSERT | GEN-008 | `app/generation/export.py` |
-| Streaming upload with the 1 GB limit, SHA-256, format and encoding detection, immutable raw files, tenant quota | ING-001…005/009/010, ING-NFR-004 | `app/storage/datasets.py`, `app/ingestion/formats.py` |
-| Sample-based schema inference (types, date formats, roles, PK candidates, PII tags) | INF-001…004/009, ING-NFR-002 | `app/ingestion/inference.py` |
-| Profiling (stats, histograms, IQR/Z outliers, duplicates, correlations, type mismatches, quality score) | ANA-001…007/009 | `app/profiling/profile.py` |
-| Sandboxed read-only SQL (SELECT-only parse check, DuckDB lockdown, timeout, row cap) | USR-003, SEC-009, LLM-NFR-007 | `app/analytics/sql_sandbox.py` |
-| LLM-suggested analytics; generated SQL is validated in the sandbox | LLM-001/002/005/006/007 | `app/analytics/suggestions.py` |
-| Data minimization levels L0–L3 (PII masked by default) | LLM-NFR-004 | `app/analytics/suggestions.py`, `app/privacy.py` |
-| Provider-agnostic LLM layer: OpenAI, Anthropic, Gemini, any OpenAI-compatible endpoint, plus a mock | LPA-001/002/003 | `app/llm/` |
-| Fallback chain (errors and refusals), tenant-scoped cache, token and cost metering, BYOK secrets | LPA-004/005/007/010 | `app/llm/router.py`, `app/llm/config.py` |
-| Tamper-evident (hash-chained) audit log, with PII redacted from LLM audit entries | AUTH-005, LLM-NFR-003 | `app/audit.py` |
+## Layout
 
-**Not built yet:** real authentication (the tenant/user headers are a dev-only stub behind `AP_DEV_AUTH=1`), Postgres/object-storage persistence, async jobs, cleaning pipelines, model training, dashboards, the API gateway and SDKs, and the frontend.
+| Path | Contents |
+|------|----------|
+| [`backend/`](backend/) | Python 3.11 · FastAPI · DuckDB · pandas · scikit-learn/XGBoost/LightGBM/CatBoost · SQLAlchemy (SQLite for dev, Postgres with row-level security in production) |
+| [`frontend/`](frontend/) | Next.js · TypeScript · Tailwind · ECharts |
+| [`sdk/`](sdk/) | Python SDK plus `ap` CLI, TypeScript SDK, mobile SDKs |
+| [`deploy/`](deploy/) | Dockerfile, Docker Compose, Helm chart (API, worker, retention CronJob) |
+| [`infra/terraform/`](infra/terraform/) | GCP (GKE, Cloud SQL, GCS, Cloud KMS, Pub/Sub, Secret Manager) and AWS (EKS, RDS, S3, KMS, SQS, Secrets Manager) |
 
-## Run it
+## Cloud provider is configuration
+
+`AP_CLOUD_PROVIDER` selects the object store, secret manager, KMS and queue implementations:
+
+| Value | Object storage | Secrets | Envelope keys | Queue |
+|-------|---------------|---------|---------------|-------|
+| `local` (default) | disk under `AP_DATA_DIR` | local file | local key | in-process |
+| `gcp` | GCS (`AP_OBJECT_BUCKET`) | Secret Manager (`AP_GCP_PROJECT`) | Cloud KMS (`AP_GCP_KMS_KEY`) | Pub/Sub (`AP_GCP_PUBSUB_TOPIC` / `_SUBSCRIPTION`) |
+| `aws` | S3 (`AP_OBJECT_BUCKET`) | Secrets Manager (`AP_AWS_REGION`) | KMS (`AP_AWS_KMS_KEY_ID`) | SQS (`AP_AWS_SQS_QUEUE_URL`) |
+
+No module outside `backend/app/cloud/` imports a cloud SDK. The Terraform environments output exactly these variables, and the Helm chart ships `values-gcp.yaml` and `values-aws.yaml`.
+
+## Run it locally
 
 ```bash
+# Backend: http://localhost:8000/docs
 cd backend
 pip install -e ".[dev]"
-AP_DEV_AUTH=1 uvicorn app.main:app --reload
-# open http://localhost:8000/docs
+AP_INLINE_WORKER=1 uvicorn app.main:app --reload
 
-pytest          # 81 tests
-ruff check . && ruff format --check .
+# Frontend: http://localhost:3000
+cd frontend && npm install && npm run dev
+
+# Or the whole stack with Postgres
+docker compose -f deploy/docker/docker-compose.yml up --build
 ```
 
-Example calls:
+Sign up through the web app, or with `POST /v1/auth/signup {tenant_id, org_name, email, password}`. Out of the box, organizations use the offline demo LLM, which returns plausible canned suggestions. To use a real provider, add a key under **Settings → LLM** (Claude, OpenAI, Gemini or any OpenAI-compatible endpoint), or set `AP_PLATFORM_LLM_KIND` / `AP_PLATFORM_LLM_MODEL` for a platform default.
 
 ```bash
-H='-H X-Tenant-ID:demo-co -H content-type:application/json'
-
-# Upload a CSV: schema is inferred, raw file stored immutably
-curl -s -X POST localhost:8000/v1/datasets -H X-Tenant-ID:demo-co -F file=@sales.csv
-
-# Profile, then query it with sandboxed SQL
-curl -s localhost:8000/v1/datasets/$ID/profile -H X-Tenant-ID:demo-co
-curl -s -X POST localhost:8000/v1/datasets/$ID/query $H -d '{"sql":"SELECT region, sum(amount) FROM data GROUP BY 1"}'
-
-# Configure a real LLM (BYOK) with a fallback, then ask for suggestions
-curl -s -X PUT localhost:8000/v1/tenant/secrets/anthropic $H -d '{"value":"sk-ant-..."}'
-curl -s -X PUT localhost:8000/v1/tenant/llm-config $H \
-  -d '{"chain":[{"kind":"anthropic","secret_name":"anthropic"},{"kind":"mock"}]}'
-curl -s -X POST localhost:8000/v1/datasets/$ID/suggestions $H -d '{"question":"what drives revenue?"}'
+pip install -e sdk/python
+export AP_URL=http://localhost:8000 AP_API_KEY=ap_live_...   # or: ap login
+ap datasets upload customers.csv
+ap experiments create churn ds_... churned --wait
+ap models register churn run_...
+ap endpoints deploy churn mdl_...
+ap endpoints predict churn '[{"tenure": 3, "plan": "basic"}]'
 ```
 
-Out of the box, every tenant uses the offline `mock` provider, which returns empty results. Configure a real provider as shown above to get actual suggestions and natural-language schemas.
+## Checks
+
+The same checks run in CI (`.github/workflows/analytics-platform-ci.yml`):
+
+```bash
+cd backend && ruff check . && ruff format --check . && pytest -q
+cd frontend && npm run lint && npx tsc --noEmit && npm test && npm run build
+cd sdk/python && pytest -q
+cd sdk/typescript && npm test
+```
 
 ## Design notes
 
-- **Single-node analytics.** D3 (1 GB per dataset) means DuckDB and pandas handle everything in-process. There is no Spark.
+- **Single-node analytics.** Decision D3 caps datasets at 1 GB, so DuckDB and pandas run in-process in the API or worker. There is no Spark.
 - **One canonical schema.** Every input format parses into `app.schema.model.Schema`, and every module consumes that.
-- **Determinism.** Each generated column has its own RNG, seeded from `(seed, entity, field)`, with separate streams for values, uniqueness fixes and nulls. Output is reproducible, adding a column leaves other columns unchanged, and previews equal the head of the full run.
-- **Layered LLM safety.** Data goes into prompts as delimited data. Output is parsed and validated against a schema, SQL is statically restricted to one SELECT and run in a locked-down DuckDB, and PII is masked before it reaches the provider.
+- **Jobs.** The database row is the source of truth. Job IDs travel over the configured queue. Workers also tick the cron scheduler; each schedule run is claimed with a conditional update.
+- **Tenancy.** `tenant_id` is on every row, enforced by Postgres row-level security. Objects are encrypted per tenant with a KMS-wrapped data key, and deleting that key crypto-shreds the tenant.
+- **Layered LLM safety.** PII is masked before data reaches a provider. Data is passed as delimited data, not instructions. Outputs are schema-validated, and generated SQL runs only as one SELECT in a locked-down DuckDB.
+- **Determinism.** Generated data is seeded per column, so output is reproducible and previews equal the head of the full run.

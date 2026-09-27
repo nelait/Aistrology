@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,6 +15,7 @@ from ..auth.rbac import Permission, Role
 from ..auth.service import ConflictError, Principal
 from ..db.models import ApiKey, Tenant, User
 from ..llm.config import TenantLLMConfig
+from ..retention import RetentionPolicy, apply_retention, get_policy, put_policy
 from ..tenancy import delete_tenant_data
 from .deps import AppState, StateDep, require
 
@@ -296,6 +298,30 @@ async def audit_log(
 @router.get("/audit/verify")
 async def verify_audit(state: AppState = StateDep, principal: Principal = require(Permission.VIEW_AUDIT)) -> dict[str, bool]:
     return {"valid": state.audit.verify(principal.tenant_id)}
+
+
+# -- Retention (SOC-PRV-002) ---------------------------------------------------------------------
+
+
+@router.get("/retention", response_model=RetentionPolicy)
+async def get_retention(state: AppState = StateDep, principal: Principal = Admin) -> RetentionPolicy:
+    return get_policy(state, principal.tenant_id)
+
+
+@router.put("/retention", response_model=RetentionPolicy)
+async def put_retention(body: RetentionPolicy, state: AppState = StateDep, principal: Principal = Admin) -> RetentionPolicy:
+    previous = get_policy(state, principal.tenant_id)
+    put_policy(state, principal.tenant_id, body)
+    state.audit.record(
+        principal.tenant_id, principal.user_id, "retention.policy_updated", before=previous.model_dump(), after=body.model_dump()
+    )
+    return body
+
+
+@router.post("/retention/apply")
+async def run_retention(state: AppState = StateDep, principal: Principal = Admin) -> dict[str, Any]:
+    """Apply the policy now instead of waiting for the daily sweep."""
+    return await asyncio.to_thread(apply_retention, state, principal.tenant_id)
 
 
 # -- SSO settings (AUTH-001) --------------------------------------------------------------------

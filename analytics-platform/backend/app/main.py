@@ -14,6 +14,7 @@ from .api.dataset_extras import router as dataset_extras_router
 from .api.deps import AppState, build_state
 from .api.extensions import extension_routers
 from .api.schema_history import router as schema_history_router
+from .api.uploads import router as uploads_router
 from .cors import CorsMiddleware
 from .jobs import handlers  # noqa: F401 - registers job handlers
 from .jobs.core import Worker
@@ -39,6 +40,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
         configure_logging()
     configure_tracing(app)
     app.state.ap.extras.setdefault("job_metrics", JOBS)
+    app.include_router(uploads_router)  # before the dataset routes, so /v1/datasets/uploads/... never matches /{dataset_id}
     for module in (auth, tenant, projects, schemas, datasets, pipelines, jobs, training, serving, dashboards):
         app.include_router(module.router)
     for extension in extension_routers():  # Phase 2 platform features
