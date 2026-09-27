@@ -16,6 +16,7 @@ import { DataGrid } from "../DataGrid";
 import { Markdown } from "../Markdown";
 import { useEndpointFields } from "../useEndpointFields";
 import { SignatureInput } from "../SignatureInput";
+import { CustomHtmlWidget, IframeWidget } from "./EmbedWidgets";
 import { Button, SelectField, Spinner, TextField } from "../ui";
 
 export interface WidgetDataArgs {
@@ -26,6 +27,8 @@ export interface WidgetDataArgs {
   filters: Record<string, FilterValue>;
   refreshMs: number;
   enabled: boolean;
+  /** Custom data source (e.g. an anonymous public link); replaces the signed-in widget-data call. */
+  fetcher?: (widgetId: string, filters: Record<string, FilterValue>, signal?: AbortSignal) => Promise<TabularResult>;
 }
 
 async function previewData(widget: Widget): Promise<TabularResult> {
@@ -47,14 +50,14 @@ function hasSource(w: Widget): boolean {
 }
 
 export function needsData(w: Widget): boolean {
-  return ["chart", "kpi", "table", "alert"].includes(w.type);
+  return ["chart", "kpi", "table", "alert", "custom_html"].includes(w.type);
 }
 
-export function useWidgetData({ dashboardId, widget, saved, filters, refreshMs, enabled }: WidgetDataArgs) {
+export function useWidgetData({ dashboardId, widget, saved, filters, refreshMs, enabled, fetcher }: WidgetDataArgs) {
   return useQuery({
-    queryKey: saved ? ["widget-data", dashboardId, widget.id, filters] : ["widget-preview", widget.id, JSON.stringify(widget.config)],
-    queryFn: ({ signal }) => (saved ? api.dashboards.widgetData(dashboardId, widget.id, filters, signal) : previewData(widget)),
-    enabled: enabled && needsData(widget) && hasSource(widget),
+    queryKey: fetcher ? ["widget-data-custom", dashboardId, widget.id, filters] : saved ? ["widget-data", dashboardId, widget.id, filters] : ["widget-preview", widget.id, JSON.stringify(widget.config)],
+    queryFn: ({ signal }) => (fetcher ? fetcher(widget.id, filters, signal) : saved ? api.dashboards.widgetData(dashboardId, widget.id, filters, signal) : previewData(widget)),
+    enabled: enabled && needsData(widget) && (!!fetcher || hasSource(widget)),
     refetchInterval: refreshMs > 0 ? refreshMs : false,
     placeholderData: (prev) => prev,
     meta: { errorPrefix: widget.title },
@@ -304,11 +307,13 @@ export function WidgetBody(props: WidgetBodyProps) {
       return <FilterControl widget={widget} value={filterValue} onChange={(v) => onFilterChange?.(v)} />;
     case "prediction":
       return <Prediction widget={widget} />;
+    case "iframe":
+      return <IframeWidget url={widget.config.iframe_url} title={widget.title} />;
     default:
       break;
   }
 
-  if (!hasSource(widget)) return <p className="text-sm text-[var(--text-2)]">Choose a data source and fields in the widget settings.</p>;
+  if (!props.fetcher && !hasSource(widget)) return <p className="text-sm text-[var(--text-2)]">Choose a data source and fields in the widget settings.</p>;
   if (q.isLoading) return <Spinner label="Loading data…" />;
   if (q.isError) return <p role="alert" className="text-sm text-red-700 dark:text-red-400">{q.error instanceof Error ? q.error.message : "Failed to load"}</p>;
   if (!result) return null;
@@ -323,6 +328,8 @@ export function WidgetBody(props: WidgetBodyProps) {
         return <DataGrid columns={columnsOf(rows, result.columns)} rows={rows} pageSize={10} dense conditionalFormat={widget.config.conditional_format} caption={widget.title} exportName={widget.title} maxHeight="100%" />;
       case "alert":
         return <Alert widget={widget} result={result} />;
+      case "custom_html":
+        return <CustomHtmlWidget html={widget.config.custom_html?.html ?? ""} title={widget.title} columns={columnsOf(rows, result.columns)} rows={rows} />;
       default:
         return null;
     }

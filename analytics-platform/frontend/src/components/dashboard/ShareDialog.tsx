@@ -5,6 +5,7 @@ import { api, API_URL } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/lib/toast";
 import { Button, Checkbox, CopyButton, Modal, SelectField, TextField } from "../ui";
+import { PublicLinks } from "./PublicLinks";
 
 /** Share inside the tenant with view or edit rights (SHR-001, SHR-002). */
 export function ShareDialog({ dashboardId, open, onClose }: { dashboardId: string; open: boolean; onClose: () => void }) {
@@ -27,7 +28,7 @@ export function ShareDialog({ dashboardId, open, onClose }: { dashboardId: strin
       open={open}
       onClose={onClose}
       title="Share dashboard"
-      size="sm"
+      size="md"
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
@@ -61,6 +62,9 @@ export function ShareDialog({ dashboardId, open, onClose }: { dashboardId: strin
             { value: "editor", label: "Can edit" },
           ]}
         />
+        <div className="border-t border-[var(--border)] pt-3">
+          {open && <PublicLinks dashboardId={dashboardId} />}
+        </div>
         <div className="border-t border-[var(--border)] pt-3">
           <p className="mb-2 text-sm font-medium">Embed in another site</p>
           <Button size="sm" onClick={() => embed.mutate()} loading={embed.isPending}>

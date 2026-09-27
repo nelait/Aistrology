@@ -9,10 +9,11 @@ import { eta, formatBytes, formatDate, formatDuration } from "@/lib/format";
 import { useToast } from "@/lib/toast";
 import { MAX_DATASET_BYTES, TOO_LARGE_MESSAGE } from "@/lib/constants";
 import { FileDrop } from "@/components/FileDrop";
+import { IngestNotes } from "@/components/dataset/IngestNotes";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, PageHeader, ProgressBar, QueryState, SelectField } from "@/components/ui";
 
 
-const ACCEPT = ".csv,.tsv,.txt,.json,.jsonl,.ndjson,.parquet,.xlsx,.xls,.xml,.gz,.zip,.avro,.orc";
+const ACCEPT = ".csv,.tsv,.txt,.json,.jsonl,.ndjson,.parquet,.xlsx,.xls,.xml,.avro,.orc,.gz,.zip,.tar,.tgz,.tar.gz";
 const CONCURRENCY = 2;
 
 interface UploadItem {
@@ -25,6 +26,7 @@ interface UploadItem {
   error?: string;
   dataset?: DatasetRecord;
   warnings?: string[];
+  relationships?: number;
   abort?: AbortController;
   projectId?: string;
 }
@@ -63,7 +65,9 @@ export default function DatasetsPage() {
           item.projectId || undefined,
         )
         .then((res) => {
-          patch(item.key, { status: "done", dataset: res.dataset, warnings: res.inference?.warnings ?? [] });
+          // table notes are also listed as inference warnings; show them once (with the table details)
+          const notes = new Set(res.dataset.tables.flatMap((t) => t.notes ?? []));
+          patch(item.key, { status: "done", dataset: res.dataset, warnings: (res.inference?.warnings ?? []).filter((w) => !notes.has(w)), relationships: res.inference?.relationships?.length ?? 0 });
           if (res.inference) qc.setQueryData(["inference", res.dataset.id], res.inference);
           qc.invalidateQueries({ queryKey: ["datasets"] });
           toast.success(`Uploaded ${item.file.name}`);
@@ -155,7 +159,12 @@ export default function DatasetsPage() {
           <h2 id="upload-h" className="sr-only">
             Upload
           </h2>
-          <FileDrop onFiles={addFiles} accept={ACCEPT} label="Drag and drop data files here" hint="CSV, TSV, JSON/JSONL, Excel, Parquet, XML — up to 1 GB each. Several files upload in parallel." />
+          <FileDrop
+            onFiles={addFiles}
+            accept={ACCEPT}
+            label="Drag and drop data files here"
+            hint="CSV, TSV, JSON/JSONL, Excel (.xlsx/.xls), Parquet, Avro, ORC, XML, or archives (.zip, .tar, .tar.gz, .gz) — up to 1 GB uncompressed each. Each file in an archive becomes a table. Non-UTF-8 text is transcoded."
+          />
           {uploads.length > 0 && (
             <Card
               title="Uploads"
@@ -207,6 +216,13 @@ export default function DatasetsPage() {
                       </div>
                       {(u.status === "uploading" || u.status === "processing") && <ProgressBar value={u.status === "processing" ? 1 : pct} label={`Upload progress for ${u.file.name}`} />}
                       {u.error && <p className="text-xs text-red-700 dark:text-red-400">{u.error}</p>}
+                      {u.dataset && <IngestNotes tables={u.dataset.tables} />}
+                      {u.dataset && u.dataset.tables.length > 1 && (
+                        <p className="text-xs text-[var(--text-2)]">
+                          Multi-table dataset: {u.dataset.tables.length} tables
+                          {u.relationships ? ` · ${u.relationships} relationship${u.relationships === 1 ? "" : "s"} detected` : ""}.
+                        </p>
+                      )}
                       {u.warnings?.map((w, i) => (
                         <p key={i} className="text-xs text-amber-800 dark:text-amber-300">
                           ⚠ {w}

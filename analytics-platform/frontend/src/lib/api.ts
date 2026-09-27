@@ -9,6 +9,7 @@
  *    access token that has since been replaced is simply retried without refreshing again.
  */
 import type * as T from "./types";
+import { toApiSpec } from "./dashboard";
 
 export * from "./types";
 
@@ -409,6 +410,13 @@ export const api = {
   schemas: {
     parse: (body: { format: T.SchemaFormat; content: string; current?: T.Schema }) => client.post<T.ParseResponse>("/v1/schemas/parse", body),
     validate: (schema: T.Schema) => client.post<{ valid: boolean; issues: T.SchemaIssue[] }>("/v1/schemas/validate", schema),
+    // SCH-010 schema history
+    save: (body: { name: string; schema: T.Schema; project_id?: string; message?: string; source_format?: string }) => client.post<T.SaveSchemaResponse>("/v1/schemas", body),
+    list: (project_id?: string) => client.get<T.SavedSchema[]>("/v1/schemas", { project_id }),
+    get: (id: string) => client.get<T.SavedSchema>(`/v1/schemas/${enc(id)}`),
+    version: (id: string, version: number) => client.get<T.SchemaVersion>(`/v1/schemas/${enc(id)}/versions/${version}`),
+    diff: (id: string, from_version?: number, to_version?: number) => client.get<T.SchemaDiff>(`/v1/schemas/${enc(id)}/diff`, { from_version, to_version }),
+    diffSchemas: (a: T.Schema, b: T.Schema) => client.post<T.SchemaDiff>("/v1/schemas/diff", { a, b }),
   },
 
   generate: {
@@ -454,6 +462,27 @@ export const api = {
     query: (id: string, sql: string, row_limit = 1000, version?: number) =>
       client.post<T.QueryResult>(`/v1/datasets/${enc(id)}/query`, { sql, row_limit }, { version }),
     suggestions: (id: string, question?: string) => client.post<T.Suggestion[]>(`/v1/datasets/${enc(id)}/suggestions`, { question: question || null }),
+    /** INF-007/008: upload the next version (append or replace) and get the column diff. */
+    uploadVersion: (id: string, file: File, mode: "append" | "replace", onProgress?: (p: UploadProgress) => void, signal?: AbortSignal) => {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      return client.upload<T.EvolutionResponse>(`/v1/datasets/${enc(id)}/versions`, form, onProgress, signal, { mode });
+    },
+    annotations: (id: string, version?: number) => client.get<T.AnnotationsOut>(`/v1/datasets/${enc(id)}/annotations`, { version }),
+    putAnnotations: (id: string, body: { columns: Record<string, T.ColumnAnnotation[]>; entity?: string; version?: number; replace?: boolean }) =>
+      client.put<T.AnnotationsOut>(`/v1/datasets/${enc(id)}/annotations`, body),
+    advancedProfile: (id: string, body: T.AdvancedProfileRequest, opts: { version?: number; table?: string } = {}) =>
+      client.post<T.AdvancedProfile>(`/v1/datasets/${enc(id)}/profile/advanced`, body, { version: opts.version, table: opts.table }),
+  },
+
+  connectors: {
+    list: () => client.get<T.Connector[]>("/v1/connectors"),
+    get: (id: string) => client.get<T.Connector>(`/v1/connectors/${enc(id)}`),
+    create: (body: T.ConnectorCreate) => client.post<T.Connector>("/v1/connectors", body),
+    remove: (id: string) => client.del(`/v1/connectors/${enc(id)}`),
+    import: (id: string, body: T.ConnectorImport) => client.post<T.Job>(`/v1/connectors/${enc(id)}/import`, body),
+    allowlist: () => client.get<{ hosts: string[] }>("/v1/connectors/allowlist"),
+    putAllowlist: (hosts: string[]) => client.put<{ hosts: string[] }>("/v1/connectors/allowlist", { hosts }),
   },
 
   pipelines: {
@@ -480,11 +509,63 @@ export const api = {
   notifications: {
     list: (unread_only = false) => client.get<T.Notification[]>("/v1/notifications", { unread_only }),
     markRead: (id: string) => client.post<void>(`/v1/notifications/${enc(id)}/read`),
+    preferences: () => client.get<{ email: string[] }>("/v1/notifications/preferences"),
+    putPreferences: (email: string[]) => client.put<{ email: string[] }>("/v1/notifications/preferences", { email }),
+  },
+
+  llmAdmin: {
+    health: () => client.get<T.LLMHealth>("/v1/tenant/llm-health"),
+    putBreaker: (body: T.BreakerConfig) => client.put<T.BreakerConfig>("/v1/tenant/llm-health/breaker", body),
+    prompts: () => client.get<T.PromptTemplate[]>("/v1/prompts"),
+    prompt: (id: string) => client.get<T.PromptTemplate>(`/v1/prompts/${enc(id)}`),
+    createPromptVersion: (id: string, body: { system: string; provider?: string; description?: string }) =>
+      client.post<T.PromptVersion>(`/v1/prompts/${enc(id)}/versions`, body),
+    setPromptActive: (id: string, version: number, active: boolean) =>
+      client.post<void>(`/v1/prompts/${enc(id)}/versions/${version}/${active ? "activate" : "deactivate"}`),
+  },
+
+  access: {
+    chatDestinations: () => client.get<T.ChatDestination[]>("/v1/tenant/chat-destinations"),
+    createChatDestination: (body: { kind: "slack" | "teams"; name: string; url: string; events: string[] }) => client.post<T.ChatDestination>("/v1/tenant/chat-destinations", body),
+    deleteChatDestination: (id: string) => client.del(`/v1/tenant/chat-destinations/${enc(id)}`),
+    oauthClients: () => client.get<T.OAuthClient[]>("/v1/tenant/oauth-clients"),
+    createOAuthClient: (body: { name: string; role: T.Role; scopes: T.PermissionName[] }) => client.post<T.OAuthClientWithSecret>("/v1/tenant/oauth-clients", body),
+    revokeOAuthClient: (id: string) => client.del(`/v1/tenant/oauth-clients/${enc(id)}`),
+    networkPolicy: () => client.get<T.NetworkPolicy>("/v1/tenant/network-policy"),
+    putNetworkPolicy: (body: T.NetworkPolicy) => client.put<T.NetworkPolicy>("/v1/tenant/network-policy", body),
+    scimToken: () => client.get<T.ScimTokenStatus>("/v1/tenant/scim-token"),
+    createScimToken: () => client.post<{ token: string; base_url: string }>("/v1/tenant/scim-token"),
+    revokeScimToken: () => client.del("/v1/tenant/scim-token"),
+    teams: () => client.get<T.Team[]>("/v1/teams"),
+    createTeam: (body: { name: string; description?: string; members: string[] }) => client.post<T.Team>("/v1/teams", body),
+    deleteTeam: (id: string) => client.del(`/v1/teams/${enc(id)}`),
+    addTeamMember: (id: string, user_id: string) => client.post<void>(`/v1/teams/${enc(id)}/members`, { user_id }),
+    removeTeamMember: (id: string, userId: string) => client.del(`/v1/teams/${enc(id)}/members/${enc(userId)}`),
+    grantProject: (projectId: string, team_id: string) => client.post<void>(`/v1/projects/${enc(projectId)}/teams`, { team_id }),
+    revokeProject: (projectId: string, teamId: string) => client.del(`/v1/projects/${enc(projectId)}/teams/${enc(teamId)}`),
+    sharing: () => client.get<{ public_links_enabled: boolean }>("/v1/tenant/sharing"),
+    putSharing: (public_links_enabled: boolean) => client.put<{ public_links_enabled: boolean }>("/v1/tenant/sharing", { public_links_enabled }),
+  },
+
+  governance: {
+    consents: () => client.get<T.ConsentRecord[]>("/v1/consents"),
+    giveConsent: (policy: T.ConsentPolicy, version: string) => client.post<T.ConsentRecord>("/v1/consents", { policy, version }),
+    withdrawConsent: (policy: T.ConsentPolicy) => client.del(`/v1/consents/${enc(policy)}`),
+    tenantConsents: (policy?: T.ConsentPolicy) => client.get<T.ConsentRecord[]>("/v1/tenant/consents", { policy }),
+    consentSettings: () => client.get<T.ConsentSettings>("/v1/tenant/consent-settings"),
+    putConsentSettings: (body: { llm_requires_consent: boolean; llm_addendum_version: string }) => client.put<T.ConsentSettings>("/v1/tenant/consent-settings", body),
+    costs: (start?: string, end?: string) => client.get<T.CostReport>("/v1/tenant/costs", { start, end }),
+  },
+
+  inboundHooks: {
+    list: () => client.get<T.InboundHook[]>("/v1/inbound-hooks"),
+    create: (body: T.InboundHookCreate) => client.post<T.InboundHookWithSecret>("/v1/inbound-hooks", body),
+    remove: (id: string) => client.del(`/v1/inbound-hooks/${enc(id)}`),
   },
 
   training: {
     algorithms: () => client.get<T.Algorithm[]>("/v1/algorithms"),
-    detect: (dataset_id: string, target: string) => client.post<T.DetectResponse>("/v1/experiments/detect", { dataset_id, target }),
+    detect: (dataset_id: string, target?: string) => client.post<T.DetectResponse>("/v1/experiments/detect", { dataset_id, target: target || undefined }),
     create: (body: T.ExperimentCreate) => client.post<{ experiment: T.Experiment; job: T.Job }>("/v1/experiments", body),
     list: () => client.get<T.Experiment[]>("/v1/experiments"),
     get: (id: string) => client.get<T.ExperimentDetail>(`/v1/experiments/${enc(id)}`),
@@ -493,6 +574,13 @@ export const api = {
     explain: (runId: string, instances: Record<string, unknown>[]) => client.post<T.ExplainResponse>(`/v1/runs/${enc(runId)}/explain`, { instances }),
     /** XAI-005: plain-English explanation from aggregate explanations (LLM). */
     explanationText: (runId: string) => client.post<{ text: string }>(`/v1/runs/${enc(runId)}/explanation-text`),
+    /** MDL-NFR-004: 409 {code: "onnx_unsupported", message} when the pipeline can't be converted. */
+    onnx: (runId: string) => client.download(`/v1/runs/${enc(runId)}/onnx`),
+    templates: () => client.get<T.TrainingTemplate[]>("/v1/training-templates"),
+    createTemplate: (body: { name: string; description?: string; config: T.TrainingConfig }) => client.post<T.TrainingTemplate>("/v1/training-templates", body),
+    deleteTemplate: (id: string) => client.del(`/v1/training-templates/${enc(id)}`),
+    applyTemplate: (id: string, body: { name: string; dataset_id: string; dataset_version?: number; overrides: T.TrainingConfig }) =>
+      client.post<{ experiment: T.Experiment; job: T.Job; template_id: string }>(`/v1/training-templates/${enc(id)}/apply`, body),
   },
 
   models: {
@@ -520,6 +608,10 @@ export const api = {
     openapi: (name: string) => client.get<Record<string, unknown>>(`/v1/endpoints/${enc(name)}/openapi.json`),
     openapiUrl: (name: string) => client.url(`/v1/endpoints/${enc(name)}/openapi.json`),
     metrics: (name: string, hours = 24) => client.get<T.EndpointMetrics>(`/v1/endpoints/${enc(name)}/metrics`, { hours }),
+    /** Forecasting endpoints: `instances` is not needed. */
+    forecast: (name: string, body: { horizon?: number; history?: Record<string, unknown>[] }) => client.post<T.ForecastResponse>(`/v1/endpoints/${enc(name)}/predict`, body),
+    drift: (name: string, hours = 24) => client.get<T.DriftReport>(`/v1/endpoints/${enc(name)}/drift`, { hours }),
+    driftCheck: (name: string, hours = 24) => client.post<T.Job>(`/v1/endpoints/${enc(name)}/drift/check`, { hours }),
   },
 
   analytics: {
@@ -532,10 +624,11 @@ export const api = {
   },
 
   dashboards: {
-    create: (name: string, spec: T.DashboardSpec) => client.post<T.Dashboard>("/v1/dashboards", { name, spec }),
+    create: (name: string, spec: T.DashboardSpec) => client.post<T.Dashboard>("/v1/dashboards", { name, spec: toApiSpec(spec) }),
     list: (archived?: boolean) => client.get<T.Dashboard[]>("/v1/dashboards", { archived }),
     get: (id: string) => client.get<T.Dashboard>(`/v1/dashboards/${enc(id)}`),
-    update: (id: string, body: { name?: string; spec?: T.DashboardSpec }) => client.put<T.Dashboard>(`/v1/dashboards/${enc(id)}`, body),
+    update: (id: string, body: { name?: string; spec?: T.DashboardSpec }) =>
+      client.put<T.Dashboard>(`/v1/dashboards/${enc(id)}`, { ...body, spec: body.spec ? toApiSpec(body.spec) : undefined }),
     remove: (id: string) => client.del(`/v1/dashboards/${enc(id)}`),
     fromTemplate: (template: string, name: string, values: Record<string, string>) => client.post<T.Dashboard>("/v1/dashboards/from-template", { template, name, values }),
     clone: (id: string) => client.post<T.Dashboard>(`/v1/dashboards/${enc(id)}/clone`),
@@ -548,6 +641,13 @@ export const api = {
     exportHtml: (id: string, filters: Record<string, T.FilterValue> = {}) => client.download(`/v1/dashboards/${enc(id)}/export`, { method: "POST", json: { filters } }),
     embedToken: (id: string, ttl_minutes = 60) => client.post<{ token: string; expires_in_minutes: number; embed_path: string }>(`/v1/dashboards/${enc(id)}/embed-token`, { ttl_minutes }),
     templates: () => client.get<T.DashboardTemplate[]>("/v1/dashboards/templates"),
+    publicLinks: (id: string) => client.get<T.PublicLink[]>(`/v1/dashboards/${enc(id)}/public-links`),
+    createPublicLink: (id: string, ttl_hours: number) => client.post<T.PublicLinkWithToken>(`/v1/dashboards/${enc(id)}/public-links`, { ttl_hours }),
+    revokePublicLink: (id: string, linkId: string) => client.del(`/v1/dashboards/${enc(id)}/public-links/${enc(linkId)}`),
+    /** Anonymous (no credentials) view of a public link. */
+    publicView: (token: string) => client.request<T.Dashboard>(`/v1/public/${enc(token)}`, { auth: false }),
+    publicWidgetData: (token: string, widgetId: string, filters: Record<string, T.FilterValue>, signal?: AbortSignal) =>
+      client.request<T.TabularResult>(`/v1/public/${enc(token)}/widgets/${enc(widgetId)}/data`, { method: "POST", json: { filters }, auth: false, signal }),
   },
 
   webhooks: {

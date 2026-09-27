@@ -17,6 +17,19 @@ Next.js (App Router) + TypeScript (strict) + Tailwind CSS client for the Analyti
 | Jobs | Status/progress table with auto-refresh, details and cancel |
 | Admin | Organization (require MFA), users, projects, SSO domains, API keys (shown once, rotate, revoke), LLM provider chain + per-task models + data-minimization L0–L3 + write-only BYOK secrets, usage, audit log (filter, export, verify chain), webhooks, data export and organization deletion |
 
+### Phase 2 features
+
+| Area | What's there |
+|------|--------------|
+| Sample data | SQL DDL input tab; XML export; per-field distributions (normal / lognormal / custom weights) and anomaly rate; saved schema history (save versions, load one, visual diff of any two versions with added / removed / changed fields and a “breaking” badge) |
+| Datasets | Uploads of `.xls`, Avro, ORC, XML and archives (`.zip`, `.tar`, `.tar.gz`, `.gz`) with per-table ingest notes and detected encoding; multi-table datasets (table picker with preview, entity diagram of detected relationships); “add a version” upload (append / replace) with the column diff; Advanced profile (Isolation Forest outliers, near-duplicate pairs, missing-value co-missingness heatmap with the heuristic MCAR/MAR label); column annotations editor; `fuzzy_deduplicate` pipeline step |
+| Connectors | `/connectors`: S3 / GCS / PostgreSQL / MySQL connectors with write-only credentials, import by object key / prefix or a single SELECT with a row limit (job progress → dataset), admin allowlist for private hosts |
+| Experiments | Clustering (k range; cluster sizes, 2-D PCA scatter, cluster profiles, k-search curve) and forecasting (time column, horizon, frequency, backtest; history + backtest windows + forecast with interval band); ensembles; auto features, PCA, CatBoost; ALE plots; force plot and LIME in the what-if panel; ONNX download (409 reason shown); training templates (save, list, load, apply) |
+| Endpoints | Drift tab (per-feature PSI bars with warn/alert thresholds, prediction PSI, “Run drift check” job); forecasting “try it” with horizon and optional history |
+| Dashboards | Public links (expiry, copy once, revoke; anonymous viewer at `/public/{token}`); iframe widget (https only, sandboxed, allowlist warning) and custom HTML/JS widget rendered only in a `sandbox="allow-scripts"` `srcdoc` iframe fed by `postMessage` (stored by the API as a `table` widget with `config.custom_html`) |
+| Admin | LLM health + circuit breaker, prompt templates (defaults, tenant overrides with provider variants, activate / deactivate), Slack / Teams destinations, OAuth clients (secret shown once, revoke), network policy (CIDR validation, lock-out warning), SCIM token, teams (members, project grants), consent (records, LLM consent requirement), costs (date range, breakdown + chart), public-link switch, incoming webhooks (secret once, curl / Python signing examples, in-browser signature tester) |
+| Settings | `/settings`: email notification preferences per event kind, your consents (record / withdraw) |
+
 ## Setup
 
 Requirements: Node.js 20+ (22 recommended) and the API running (see `../backend`).
@@ -43,6 +56,7 @@ For SSO, the backend's `AP_OIDC_REDIRECT_URIS` must include `<frontend origin>/a
 |----------|---------|------|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Build time (inlined into the bundle) |
 | `API_PROXY_TARGET` | unset | Build time; enables the `/api/*` → API rewrite |
+| `NEXT_PUBLIC_IFRAME_ALLOWLIST` | unset | Comma-separated hosts (`*.example.com` allowed) the iframe widget expects; other hosts get a warning |
 
 ## Scripts
 
@@ -56,7 +70,9 @@ npm start           # serve the production build
 
 Tests cover the API client's token refresh (single in-flight refresh for concurrent 401s, rotation by
 another tab, session loss), the query-builder SQL generation (quoting, operators, parameters) and the
-pipeline step form serialization (every `op`, validation, round-trips, a rendered form).
+pipeline step form serialization (every `op`, validation, round-trips, a rendered form), and the Phase 2 helpers: schema diff
+rendering, PSI status mapping, CIDR validation, inbound-hook signature examples (checked against Node's HMAC), iframe URL
+validation, the sandboxed custom HTML widget, distribution settings, connector forms and cost breakdowns.
 
 ## Docker
 

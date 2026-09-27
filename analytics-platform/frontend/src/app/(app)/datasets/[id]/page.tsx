@@ -5,14 +5,18 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatBytes, formatDate } from "@/lib/format";
-import { Badge, PageHeader, QueryState, TabPanel, Tabs } from "@/components/ui";
+import { Badge, EmptyState, PageHeader, QueryState, TabPanel, Tabs } from "@/components/ui";
 import { SchemaTab } from "@/components/dataset/SchemaTab";
 import { ProfileTab } from "@/components/dataset/ProfileTab";
 import { DataTab } from "@/components/dataset/DataTab";
 import { SuggestionsTab } from "@/components/dataset/SuggestionsTab";
 import { VersionsTab } from "@/components/dataset/VersionsTab";
+import { TablesTab } from "@/components/dataset/TablesTab";
+import { AdvancedProfileTab } from "@/components/dataset/AdvancedProfileTab";
+import { AnnotationsTab } from "@/components/dataset/AnnotationsTab";
+import { IngestNotes } from "@/components/dataset/IngestNotes";
 
-const TABS = ["schema", "profile", "data", "suggestions", "versions"] as const;
+const TABS = ["schema", "tables", "profile", "advanced", "annotations", "data", "suggestions", "versions"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function DatasetDetailPage() {
@@ -78,13 +82,19 @@ export default function DatasetDetailPage() {
               </>
             }
           />
+          <div className="mb-3">
+            <IngestNotes tables={d.tables.filter((t) => t.source_format || t.source_encoding || t.notes?.length)} compact />
+          </div>
           <Tabs
             label="Dataset sections"
             active={tab}
             onChange={setTab}
             tabs={[
               { id: "schema", label: "Schema" },
+              { id: "tables", label: d.tables.length > 1 ? `Tables (${d.tables.length})` : "Table" },
               { id: "profile", label: "Profile" },
+              { id: "advanced", label: "Advanced profile" },
+              { id: "annotations", label: "Annotations" },
               { id: "data", label: "Data (SQL)" },
               { id: "suggestions", label: "Suggestions", hidden: !can("analytics.create") },
               { id: "versions", label: "Versions" },
@@ -92,7 +102,17 @@ export default function DatasetDetailPage() {
           />
           <TabPanel id={tab}>
             {tab === "schema" && <SchemaTab dataset={d} />}
-            {tab === "profile" && <ProfileTab dataset={d} />}
+            {tab === "tables" && <TablesTab dataset={d} />}
+            {tab === "profile" &&
+              (d.tables.length > 1 ? (
+                <EmptyState title="Profile a table" action={<button type="button" className="text-sm text-brand-600 underline dark:text-brand-300" onClick={() => setTab("advanced")}>Open Advanced profile</button>}>
+                  This dataset has {d.tables.length} tables. The summary profile covers single-table datasets; use the Advanced profile (with a table picker) or the Tables tab.
+                </EmptyState>
+              ) : (
+                <ProfileTab dataset={d} />
+              ))}
+            {tab === "advanced" && <AdvancedProfileTab dataset={d} />}
+            {tab === "annotations" && <AnnotationsTab dataset={d} />}
             {tab === "data" && <DataTab dataset={d} />}
             {tab === "suggestions" && <SuggestionsTab dataset={d} />}
             {tab === "versions" && <VersionsTab dataset={d} />}

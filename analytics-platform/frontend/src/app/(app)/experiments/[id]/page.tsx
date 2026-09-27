@@ -3,7 +3,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type Experiment, type Job, type Run } from "@/lib/api";
+import { api, ApiError, type Experiment, type Job, type Run } from "@/lib/api";
+import { saveBlob } from "@/lib/data";
 import { useAuth } from "@/lib/auth";
 import { formatDuration, formatNumber } from "@/lib/format";
 import { useToast } from "@/lib/toast";
@@ -13,7 +14,7 @@ import { WhatIf } from "@/components/experiments/WhatIf";
 import { JobProgress } from "@/components/JobProgress";
 import { Badge, Button, Card, EmptyState, KeyValue, Modal, PageHeader, QueryState, StatusBadge, TabPanel, Tabs, TextArea, TextField } from "@/components/ui";
 
-const LOWER_IS_BETTER = /(mae|mse|rmse|mape|loss|error)/i;
+const LOWER_IS_BETTER = /(mae|mse|rmse|mape|mase|smape|loss|error|davies|interval_width)/i;
 const ACTIVE = new Set(["queued", "running"]);
 
 export default function ExperimentPage() {
@@ -42,7 +43,14 @@ function metric(r: Run, name: string): number | undefined {
 
 function primaryMetric(runs: Run[], problem?: string | null): string | null {
   const names = numericMetricNames(runs);
-  const pref = problem === "regression" ? ["rmse", "mae", "r2"] : ["roc_auc", "f1", "f1_macro", "accuracy"];
+  const pref =
+    problem === "regression"
+      ? ["rmse", "mae", "r2"]
+      : problem === "clustering"
+        ? ["silhouette", "calinski_harabasz"]
+        : problem === "forecasting"
+          ? ["mase", "smape", "mae"]
+          : ["roc_auc", "f1", "f1_macro", "accuracy"];
   return pref.find((p) => names.includes(p)) ?? names[0] ?? null;
 }
 
@@ -106,7 +114,13 @@ function ExperimentView({ experiment, runs, job }: { experiment: Experiment; run
         }
         description={
           <>
-            Target <span className="font-mono">{experiment.config.target}</span>
+            {experiment.config.target ? (
+              <>
+                Target <span className="font-mono">{experiment.config.target}</span>
+              </>
+            ) : (
+              "No target"
+            )}
             {problemType ? ` · ${problemType}` : ""} · dataset{" "}
             <Link href={`/datasets/${experiment.dataset_id}`} className="underline">
               {experiment.dataset_id}
@@ -145,7 +159,7 @@ function ExperimentView({ experiment, runs, job }: { experiment: Experiment; run
           { id: "leaderboard", label: `Leaderboard (${runs.length})` },
           { id: "run", label: "Run details" },
           { id: "compare", label: `Compare${selected.length ? ` (${selected.length})` : ""}` },
-          { id: "whatif", label: "What-if" },
+          { id: "whatif", label: "What-if", hidden: problemType === "clustering" || problemType === "forecasting" },
         ]}
       />
       <TabPanel id={tab}>
@@ -218,7 +232,7 @@ function ExperimentView({ experiment, runs, job }: { experiment: Experiment; run
           <QueryState query={run}>
             {(r) => (
               <div className="space-y-4">
-                <Card title={`${r.algorithm} · ${r.id.slice(0, 8)}`}>
+                <Card title={`${r.algorithm} · ${r.id.slice(0, 8)}`} actions={<OnnxButton run={r} />}>
                   <KeyValue
                     items={[
                       ["Status", <StatusBadge key="s" status={r.status} />],
@@ -259,5 +273,37 @@ function ExperimentView({ experiment, runs, job }: { experiment: Experiment; run
         </div>
       </Modal>
     </div>
+  );
+}
+
+/** MDL-NFR-004: download the run as ONNX; a 409 explains why the pipeline can't be converted. */
+function OnnxButton({ run }: { run: Run }) {
+  const toast = useToast();
+  const [reason, setReason] = useState<string | null>(null);
+  const download = useMutation({
+    mutationFn: () => api.training.onnx(run.id),
+    meta: { silent: true },
+    onSuccess: ({ blob, filename }) => {
+      setReason(null);
+      saveBlob(blob, filename ?? `${run.id}.onnx`);
+      toast.success("ONNX model downloaded");
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 409) setReason(err.message);
+      else toast.error(`ONNX export failed: ${err instanceof Error ? err.message : String(err)}`);
+    },
+  });
+  if (run.status !== "succeeded") return null;
+  return (
+    <span className="flex flex-col items-end gap-1">
+      <Button size="sm" onClick={() => download.mutate()} loading={download.isPending}>
+        Download ONNX
+      </Button>
+      {reason && (
+        <span role="alert" className="max-w-sm text-right text-xs text-amber-800 dark:text-amber-300">
+          ⚠ Not exportable: {reason}
+        </span>
+      )}
+    </span>
   );
 }

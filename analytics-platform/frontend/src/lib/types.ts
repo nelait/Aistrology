@@ -236,6 +236,8 @@ export interface SchemaField {
   references?: { entity: string; field: string } | null;
   description?: string | null;
   source_name?: string | null;
+  /** ANA-010 column annotations */
+  annotations?: ColumnAnnotation[];
 }
 
 export interface Entity {
@@ -256,7 +258,7 @@ export interface SchemaIssue {
   [key: string]: unknown;
 }
 
-export type SchemaFormat = "json_schema" | "xsd" | "natural_language";
+export type SchemaFormat = "json_schema" | "xsd" | "natural_language" | "sql_ddl";
 
 export interface ParseResponse {
   schema: Schema;
@@ -270,9 +272,23 @@ export interface GenerationOptions {
   seed: number;
   children_per_parent?: [number, number];
   null_rate: number;
+  /** GEN-006: {"entity.field": Distribution} */
+  distributions?: Record<string, Distribution>;
+  /** GEN-009: 0–0.5 */
+  anomaly_rate?: number;
 }
 
-export type ExportFormat = "csv" | "json" | "jsonl" | "parquet" | "sql";
+export type DistributionKind = "uniform" | "normal" | "lognormal" | "weights";
+
+export interface Distribution {
+  kind: DistributionKind;
+  mean?: number | null;
+  std?: number | null;
+  sigma?: number | null;
+  weights?: Record<string, number> | null;
+}
+
+export type ExportFormat = "csv" | "json" | "jsonl" | "parquet" | "sql" | "xml";
 
 export interface GeneratePreview {
   planned_rows: Record<string, number>;
@@ -289,6 +305,12 @@ export interface TableRecord {
   sha256: string;
   row_count?: number | null;
   encoding?: string | null;
+  original_filename?: string | null;
+  /** ING-003a / ING-006 / CLN-009: set when the stored table was converted, extracted or transcoded */
+  source_format?: string | null;
+  source_encoding?: string | null;
+  raw_file?: string | null;
+  notes?: string[];
 }
 
 export interface DatasetRecord {
@@ -325,11 +347,21 @@ export interface ColumnReport {
   parse_rate?: number | null;
 }
 
+export interface Relationship {
+  child_entity: string;
+  child_field: string;
+  parent_entity: string;
+  parent_field: string;
+  name_score: number;
+  containment: number;
+}
+
 export interface InferenceResult {
   schema: Schema;
-  columns: ColumnReport[];
+  columns: (ColumnReport & { table?: string | null })[];
   sampled_rows: number;
   warnings: string[];
+  relationships?: Relationship[];
 }
 
 export interface UploadResponse {
@@ -412,6 +444,7 @@ export type StepOp =
   | "fill_missing"
   | "handle_outliers"
   | "deduplicate"
+  | "fuzzy_deduplicate"
   | "cast"
   | "normalize_strings"
   | "normalize_dates"
@@ -502,7 +535,8 @@ export interface Notification {
 
 // -- Training -------------------------------------------------------------------
 
-export type ProblemType = "binary" | "multiclass" | "regression";
+export type SupervisedProblemType = "binary" | "multiclass" | "regression";
+export type ProblemType = SupervisedProblemType | "clustering" | "forecasting";
 
 export interface Hyperparameter {
   name: string;
@@ -525,7 +559,9 @@ export interface Algorithm {
 
 export interface DetectResponse {
   problem_type: ProblemType;
-  reason: string;
+  reason?: string;
+  /** MDL-002a: a numeric target on a regular date index can also be forecast */
+  alternatives?: { problem_type: ProblemType; time_column?: string; frequency?: string; reason?: string }[];
   /** backend returns [{value, count}] (top 100 classes) */
   classes?: ({ value: string; count: number } | JsonValue)[] | null;
   imbalance_hint?: string;
@@ -535,7 +571,8 @@ export interface ExperimentCreate {
   name: string;
   dataset_id: string;
   dataset_version?: number;
-  target: string;
+  /** optional only for clustering */
+  target?: string;
   features?: string[];
   problem_type?: ProblemType;
   split: { method: "random" | "stratified" | "time"; test_size: number; validation_size: number; time_column?: string };
@@ -548,10 +585,44 @@ export interface ExperimentCreate {
     scaling: "standard" | "minmax" | "robust" | "log" | "none";
     impute: "median" | "mean" | "most_frequent";
     feature_selection?: { method: "mutual_info" | "correlation" | "rfe" | "l1"; k: number };
+    /** FE-001 */
+    auto_features?: { interactions: boolean; polynomial: boolean; top_k: number } | null;
+    /** FE-005: < 1 = share of variance kept, >= 1 = number of components */
+    pca?: { n_components: number } | null;
   };
   class_imbalance: "none" | "class_weight" | "smote" | "undersample" | "oversample";
   max_training_seconds: number;
   seed: number;
+  /** TRN-005; enabled null = on when AutoML picked the algorithms */
+  ensemble?: { enabled: boolean | null; methods: ("stacking" | "voting")[]; top_k: number };
+  /** TRN-006 */
+  clustering?: { k_min: number; k_max: number; max_fit_rows?: number } | null;
+  /** TRN-007 */
+  forecast?: ForecastConfig | null;
+}
+
+export interface ForecastConfig {
+  time_column: string;
+  /** pandas offset alias (D, W-SUN, MS, h …); empty = detect */
+  frequency?: string | null;
+  horizon: number;
+  season_length?: number | null;
+  backtest_folds: number;
+  interval_level: number;
+  aggregation: "mean" | "sum" | "last";
+}
+
+/** A TrainingConfig: the experiment body without name / dataset. */
+export type TrainingConfig = Partial<Omit<ExperimentCreate, "name" | "dataset_id" | "dataset_version">>;
+
+export interface TrainingTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  config: TrainingConfig;
+  created_by: string;
+  created_at: string;
+  updated_at?: string;
 }
 
 export interface Experiment {
@@ -589,6 +660,22 @@ export interface RunArtifacts {
   shap_base_value?: number | number[];
   explanation_text?: string | null;
   classes?: JsonValue[];
+  /** XAI-001a accumulated local effects */
+  ale?: Record<string, { grid: number[]; ale: number[]; counts?: number[] }>;
+  /** TRN-005 */
+  ensemble_members?: { algorithm: string; params?: Record<string, unknown> }[];
+  // EXP-005 clustering
+  cluster_sizes?: { cluster: number; size: number; share: number }[];
+  projection?: { x: number[]; y: number[]; cluster: number[]; explained_variance?: number[] };
+  cluster_profiles?: { cluster: number; size: number; means: Record<string, number | null>; top_categories?: Record<string, JsonValue> }[];
+  overall_means?: Record<string, number | null>;
+  k_search?: { params: Record<string, unknown>; cv_score?: number | null; silhouette?: number | null; [key: string]: unknown }[];
+  // EXP-004 forecasting
+  history?: { timestamps: string[]; values: (number | null)[] };
+  backtest?: { origin: string; timestamps: string[]; actual: (number | null)[]; forecast: number[]; lower?: number[]; upper?: number[] }[];
+  forecast?: { timestamps: string[]; forecast: number[]; lower?: number[]; upper?: number[]; interval_level?: number };
+  frequency?: string;
+  season_length?: number | null;
   [key: string]: unknown;
 }
 
@@ -622,6 +709,24 @@ export interface ExplainResponse {
   classes?: JsonValue[];
   shap: Record<string, number>[];
   base_value: number | number[];
+  /** XAI-002a */
+  force_plot?: ForcePlot[];
+  lime?: LimeExplanation[];
+}
+
+export interface ForcePlot {
+  base_value: number;
+  output_value: number;
+  features: { feature: string; value: JsonValue; shap: number; direction: "up" | "down" }[];
+}
+
+export interface LimeExplanation {
+  prediction: JsonValue;
+  local_prediction: number;
+  intercept: number;
+  r2: number;
+  weights: { feature: string; value: JsonValue; weight: number }[];
+  explained_class?: JsonValue;
 }
 
 // -- Registry & serving ------------------------------------------------------------
@@ -724,6 +829,43 @@ export interface PredictResponse {
   explanations?: Record<string, number>[] | null;
 }
 
+/** Forecasting endpoint response */
+export interface ForecastResponse {
+  horizon: number;
+  timestamps: string[];
+  predictions: number[];
+  lower?: number[];
+  upper?: number[];
+  interval_level?: number;
+  model_version: number | string | { model_id: string; version: number };
+}
+
+export type DriftStatus = "ok" | "warn" | "alert" | "insufficient_data" | "no_data" | "not_applicable";
+
+export interface DriftFeature {
+  feature: string;
+  type?: string;
+  psi: number | null;
+  status: DriftStatus | string;
+  bins?: string[];
+  expected?: number[];
+  actual?: number[];
+  samples?: number;
+}
+
+export interface DriftReport {
+  endpoint: string;
+  window_hours: number;
+  thresholds: { warn: number; alert: number };
+  min_samples: number;
+  samples: number;
+  status: DriftStatus | string;
+  model_version?: { model_version_id: string; samples: number } | null;
+  features: DriftFeature[];
+  prediction: { psi: number | null; status: DriftStatus | string; bins?: string[]; expected?: number[]; actual?: number[] } | null;
+  by_version?: Record<string, unknown>;
+}
+
 export interface EndpointMetrics {
   window_hours?: number;
   requests: number;
@@ -813,7 +955,11 @@ export interface TabularResult {
 
 // -- Dashboards -------------------------------------------------------------------
 
-export type WidgetType = "chart" | "kpi" | "table" | "text" | "filter" | "image" | "prediction" | "alert";
+/**
+ * `custom_html` is a UI-only type: the API stores it as a `table` widget with `config.custom_html`, so the
+ * server still computes its data (see lib/embed.ts).
+ */
+export type WidgetType = "chart" | "kpi" | "table" | "text" | "filter" | "image" | "prediction" | "alert" | "iframe" | "custom_html";
 
 export interface Threshold {
   op: ">" | ">=" | "<" | "<=" | "==" | "!=";
@@ -843,6 +989,10 @@ export interface WidgetConfig {
   image_url?: string;
   filter?: { column: string; kind: "dropdown" | "multiselect" | "slider" | "date"; dataset_id: string };
   endpoint?: string;
+  /** WDG-009 */
+  iframe_url?: string;
+  /** WDG-010: rendered only inside a sandboxed srcdoc iframe */
+  custom_html?: { html: string };
   thresholds?: Threshold[];
   conditional_format?: ConditionalFormat[];
   value_column?: string;
@@ -925,3 +1075,299 @@ export interface WebhookDelivery {
   created_at?: string;
   delivered_at?: string | null;
 }
+
+// -- Phase 2 data layer ------------------------------------------------------------------
+
+export type ColumnAnnotation = "pii" | "sensitive" | "derived" | "target" | "id";
+export const COLUMN_ANNOTATIONS: ColumnAnnotation[] = ["pii", "sensitive", "derived", "target", "id"];
+
+export interface SchemaDiffField {
+  name: string;
+  type: string;
+  nullable: boolean;
+}
+
+export interface SchemaDiffEntity {
+  name: string;
+  added_fields: SchemaDiffField[];
+  removed_fields: SchemaDiffField[];
+  retyped_fields: { field: string; from_type: string; to_type: string }[];
+  changed_fields: { field: string; attribute: string; from: unknown; to: unknown }[];
+}
+
+export interface SchemaDiff {
+  identical: boolean;
+  added_entities: string[];
+  removed_entities: string[];
+  entities: SchemaDiffEntity[];
+  breaking: boolean;
+  summary: string[];
+}
+
+export interface SchemaVersion {
+  version: number;
+  content_hash: string;
+  source_format?: string | null;
+  message?: string | null;
+  created_by: string;
+  created_at: string;
+  schema?: Schema | null;
+}
+
+export interface SavedSchema {
+  id: string;
+  project_id: string;
+  name: string;
+  current_version: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  versions?: SchemaVersion[] | null;
+}
+
+export interface SaveSchemaResponse {
+  schema_record: SavedSchema;
+  version: number;
+  created: boolean;
+  diff?: SchemaDiff | null;
+}
+
+export interface EvolutionResponse {
+  dataset: DatasetRecord;
+  previous_version: number;
+  mode: "append" | "replace";
+  inference: InferenceResult;
+  diff: SchemaDiff;
+}
+
+export interface AnnotationsOut {
+  dataset_id: string;
+  version: number;
+  annotations: Record<string, Record<string, ColumnAnnotation[]>>;
+}
+
+export interface AdvancedProfileRequest {
+  isolation_forest?: { enabled: boolean; contamination?: "auto" | number; n_estimators?: number; max_rows?: number; columns?: string[]; seed?: number };
+  near_duplicates?: { enabled: boolean; columns?: string[]; threshold?: number; window?: number; max_rows?: number };
+  missing_patterns?: { enabled: boolean; alpha?: number; max_rows?: number; max_columns?: number };
+}
+
+export interface AdvancedProfile {
+  row_count: number;
+  isolation_forest?: {
+    columns: string[];
+    contamination: number | string;
+    sampled_rows: number;
+    total_rows: number;
+    outlier_count: number;
+    outlier_fraction: number;
+    examples: { row: number; score: number; values: Row }[];
+    message?: string | null;
+  } | null;
+  near_duplicates?: {
+    columns: string[];
+    threshold: number;
+    method: string;
+    rows_scanned: number;
+    sampled: boolean;
+    pair_count: number;
+    cluster_count: number;
+    duplicate_rows: number;
+    examples: { rows: [number, number]; score: number; values: [Row, Row] }[];
+  } | null;
+  missing_patterns?: {
+    heuristic: boolean;
+    method: string;
+    rows_analyzed: number;
+    columns: string[];
+    missing_fraction: Record<string, number>;
+    co_missingness: Record<string, Record<string, number>>;
+    indicator_correlation: Record<string, Record<string, number | null>>;
+    patterns: { missing_columns: string[]; count: number; fraction: number }[];
+    mechanisms: { column: string; missing_fraction: number; label: string; associated_with: string[]; min_adjusted_p_value?: number | null; evidence: string }[];
+  } | null;
+}
+
+export type ConnectorKind = "s3" | "gcs" | "postgresql" | "mysql";
+
+export interface Connector {
+  id: string;
+  name: string;
+  kind: ConnectorKind | string;
+  config: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+}
+
+export interface ConnectorCreate {
+  name: string;
+  kind: ConnectorKind;
+  config: Record<string, unknown>;
+  /** write-only: stored in the secret manager, never returned */
+  credentials: Record<string, unknown>;
+}
+
+export interface ConnectorImport {
+  project_id?: string;
+  name?: string;
+  key?: string;
+  prefix?: string;
+  query?: string;
+  row_limit?: number;
+}
+
+// -- Phase 2 platform features ------------------------------------------------------------------
+
+export interface ProviderHealth {
+  provider: string;
+  requests: number;
+  errors: number;
+  refusals: number;
+  error_rate: number;
+  refusal_rate: number;
+  latency_ms: { p50: number | null; p95: number | null; max: number | null };
+  last_outcome: string | null;
+  seconds_since_last: number | null;
+  breaker?: "closed" | "open" | "half_open" | string;
+  status: "healthy" | "degraded" | "unhealthy" | string;
+}
+
+export interface BreakerConfig {
+  enabled: boolean;
+  failure_threshold: number;
+  open_seconds: number;
+}
+
+export interface LLMHealth {
+  window_seconds: number;
+  breaker: BreakerConfig;
+  providers: ProviderHealth[];
+}
+
+export interface PromptVersion {
+  ref: string;
+  version: number;
+  provider: string;
+  scope: string;
+  active: boolean;
+  description: string | null;
+  system: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface PromptTemplate {
+  template_id: string;
+  description: string;
+  variables: string[];
+  default: { ref: string; system: string };
+  effective: { ref: string; source: "default" | "platform" | "tenant" | string } | null;
+  tenant_versions?: PromptVersion[];
+  platform_versions?: PromptVersion[];
+}
+
+export const NOTIFICATION_KINDS = ["job.succeeded", "job.failed", "model.registered", "endpoint.deployed", "dataset.version_created", "endpoint.threshold"] as const;
+
+export interface ChatDestination {
+  id: string;
+  kind: "slack" | "teams";
+  name: string;
+  host: string;
+  events: string[];
+  active: boolean;
+  created_at: string;
+}
+
+export interface OAuthClient {
+  id: string;
+  client_id: string;
+  name: string;
+  role: Role;
+  scopes: string[];
+  created_by: string;
+  created_at: string;
+  revoked_at: string | null;
+  last_used_at: string | null;
+}
+
+export type OAuthClientWithSecret = OAuthClient & { client_secret: string; token_url: string };
+
+export interface NetworkPolicy {
+  allow: string[];
+  deny: string[];
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  description: string | null;
+  members: string[];
+  projects: string[];
+  created_at: string;
+}
+
+export interface ScimTokenStatus {
+  configured: boolean;
+  created_at: string | null;
+  created_by: string | null;
+}
+
+export type ConsentPolicy = "terms" | "privacy" | "llm_processing";
+
+export interface ConsentRecord {
+  id: string;
+  user_id: string;
+  role: string;
+  policy: ConsentPolicy;
+  version: string;
+  accepted_at: string;
+  withdrawn_at: string | null;
+}
+
+export interface ConsentSettings {
+  llm_requires_consent: boolean;
+  llm_addendum_version: string;
+  llm_consent_given?: boolean;
+}
+
+export interface CostReport {
+  start: string;
+  end: string;
+  currency: string;
+  rates: Record<string, number>;
+  total_cost_usd: number;
+  llm: { cost_usd: number; by_model: Record<string, number>; input_tokens: number; output_tokens: number; unpriced_requests: number };
+  compute: { seconds: number; cost_usd: number; by_job_type: Record<string, number> };
+  storage: { bytes: number; gb_months: number; cost_usd: number; basis: string };
+  api: { requests: number; cost_usd: number; by_key: Record<string, number> };
+}
+
+export interface PublicLink {
+  id: string;
+  dashboard_id?: string;
+  status: "active" | "expired" | "revoked" | string;
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+}
+
+export type PublicLinkWithToken = PublicLink & { token: string; path: string };
+
+export interface InboundHook {
+  id: string;
+  name: string;
+  action: "predict" | "ingest";
+  config: { endpoint?: string; dataset_id?: string; mode?: "append" | "replace" };
+  active: boolean;
+  path: string;
+  created_by: string;
+  created_at: string;
+  last_triggered_at: string | null;
+}
+
+export type InboundHookWithSecret = InboundHook & { secret: string; signature_header?: string };
+
+export type InboundHookCreate =
+  | { name: string; action: "predict"; endpoint: string }
+  | { name: string; action: "ingest"; dataset_id: string; mode: "append" | "replace" };
