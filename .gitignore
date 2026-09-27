@@ -32,3 +32,6 @@ __pycache__/
 .ruff_cache/
 analytics-platform/backend/.data/
 *.egg-info/
+
+# agent worktrees
+.claude/worktrees/
