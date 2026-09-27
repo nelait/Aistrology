@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 
-from ..auth.rbac import Permission
+from ..auth.rbac import Permission, has_permission
 from ..auth.service import Principal
 from ..db.models import Notification
 from ..jobs.core import JobOut, JobService
@@ -32,11 +32,16 @@ async def list_jobs(
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)
-async def get_job(job_id: str, state: AppState = StateDep, principal: Principal = require(Permission.READ_DATA)) -> JobOut:
+async def get_job(job_id: str, state: AppState = StateDep, principal: Principal = PrincipalDep) -> JobOut:
+    """Readable with data.read, or by whoever submitted the job (e.g. a predict-only key polling its batch job)."""
     try:
-        return JobService(state).get(principal.tenant_id, job_id)
+        job = JobService(state).get(principal.tenant_id, job_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="job not found") from exc
+    scopes = principal.scopes if principal.method == "api_key" else None
+    if job.created_by != principal.user_id and not has_permission(principal.role, Permission.READ_DATA, scopes):
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobOut)

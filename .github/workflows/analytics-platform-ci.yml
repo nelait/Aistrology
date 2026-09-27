@@ -53,6 +53,12 @@ jobs:
       - name: Tests
         run: pytest -q
 
+      - name: Python SDK + CLI tests (unit and end-to-end against this backend)
+        run: |
+          pip install -e ../sdk/python
+          ruff check ../sdk/python
+          pytest -q ../sdk/python/tests
+
       # SEC-006: static application security testing. High severity blocks;
       # medium findings are reported without failing (the sandboxed-SQL
       # builders intentionally trip B608).
