@@ -18,6 +18,7 @@ interface NavItem {
 
 export const NAV: NavItem[] = [
   { href: "/datasets", label: "Datasets", perm: "data.read", icon: "M4 6c0-1.1 3.6-2 8-2s8 .9 8 2-3.6 2-8 2-8-.9-8-2zm0 0v12c0 1.1 3.6 2 8 2s8-.9 8-2V6M4 12c0 1.1 3.6 2 8 2s8-.9 8-2" },
+  { href: "/connectors", label: "Connectors", perm: "data.read", icon: "M10 13a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7M14 11a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7l1.7-1.7" },
   { href: "/generate", label: "Sample data", perm: "data.write", icon: "M12 3v18M3 12h18" },
   { href: "/pipelines", label: "Pipelines", perm: "data.read", icon: "M4 6h16M4 12h10M4 18h6" },
   { href: "/analytics", label: "Analytics", perm: "view", icon: "M4 20V10m6 10V4m6 16v-7m4 7H2" },
@@ -138,6 +139,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </button>
             {menuOpen && (
               <div role="menu" className="absolute right-0 z-50 mt-1 w-52 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 shadow-xl" onKeyDown={(e) => e.key === "Escape" && setMenuOpen(false)}>
+                <Link role="menuitem" href="/settings" className="block rounded px-3 py-2 text-sm hover:bg-[var(--surface-2)]">
+                  Settings &amp; notifications
+                </Link>
                 <Link role="menuitem" href="/settings/mfa" className="block rounded px-3 py-2 text-sm hover:bg-[var(--surface-2)]">
                   Two-factor authentication {me?.mfa_enabled ? "✓" : ""}
                 </Link>

@@ -3,12 +3,17 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api, type DatasetRecord } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
+import { useAuth } from "@/lib/auth";
 import { Badge, Card, QueryState } from "../ui";
+import { AddVersion } from "./AddVersion";
 
 /** Version lineage (PIP-007). */
 export function VersionsTab({ dataset }: { dataset: DatasetRecord }) {
+  const { can } = useAuth();
   const q = useQuery({ queryKey: ["versions", dataset.id], queryFn: () => api.datasets.versions(dataset.id) });
   return (
+    <div className="space-y-4">
+    {can("data.write") && <AddVersion dataset={dataset} />}
     <Card title="Versions & lineage" bodyClassName="p-0">
       <QueryState query={q}>
         {(versions) => (
@@ -48,5 +53,6 @@ export function VersionsTab({ dataset }: { dataset: DatasetRecord }) {
         )}
       </QueryState>
     </Card>
+    </div>
   );
 }

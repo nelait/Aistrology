@@ -5,6 +5,8 @@ import { api, type ConditionalFormat, type Threshold, type Widget, type WidgetCo
 import { schemaColumns } from "@/lib/data";
 import { ChartConfig } from "../analytics/ChartConfig";
 import { Markdown } from "../Markdown";
+import { CUSTOM_HTML_EXAMPLE, configuredAllowlist, validateIframeUrl } from "@/lib/embed";
+import { appOrigins } from "./EmbedWidgets";
 import { SqlEditor } from "../SqlEditor";
 import { Button, Modal, MultiSelect, SelectField, TextArea, TextField, toOptions } from "../ui";
 
@@ -31,7 +33,7 @@ export function WidgetConfigDrawer({ widget, onChange, onClose }: { widget: Widg
   if (!widget) return <Modal open={false} onClose={onClose} title="" side>{null}</Modal>;
   const set = (patch: Partial<WidgetConfig>) => onChange({ ...widget, config: { ...widget.config, ...patch } });
   const setKpi = (patch: Partial<NonNullable<WidgetConfig["kpi"]>>) => set({ kpi: { value: c.kpi?.value ?? "", ...c.kpi, ...patch } });
-  const needsSource = ["chart", "kpi", "table", "alert"].includes(widget.type);
+  const needsSource = ["chart", "kpi", "table", "alert", "custom_html"].includes(widget.type);
   const sourceKind = c.analytic_id ? "analytic" : c.sql !== undefined ? "sql" : "auto";
 
   return (
@@ -180,6 +182,10 @@ export function WidgetConfigDrawer({ widget, onChange, onClose }: { widget: Widg
           </>
         )}
 
+        {widget.type === "iframe" && <IframeConfig url={c.iframe_url ?? ""} onChange={(iframe_url) => set({ iframe_url })} />}
+
+        {widget.type === "custom_html" && <CustomHtmlConfig html={c.custom_html?.html ?? ""} onChange={(html) => set({ custom_html: { html } })} />}
+
         {widget.type === "image" && <TextField label="Image URL" type="url" value={c.image_url ?? ""} onChange={(e) => set({ image_url: e.target.value })} placeholder="https://…" hint="The widget title is used as alt text." />}
 
         {widget.type === "filter" && (
@@ -224,5 +230,51 @@ export function WidgetConfigDrawer({ widget, onChange, onClose }: { widget: Widg
         </fieldset>
       </div>
     </Modal>
+  );
+}
+
+function IframeConfig({ url, onChange }: { url: string; onChange: (v: string) => void }) {
+  const check = url ? validateIframeUrl(url, { blockedOrigins: appOrigins(), allowlist: configuredAllowlist() }) : null;
+  const allowlist = configuredAllowlist();
+  return (
+    <div className="space-y-2">
+      <TextField
+        label="Page URL"
+        type="url"
+        value={url}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="https://…"
+        error={check && !check.ok ? check.error : null}
+        hint="https only. The page runs in a sandboxed iframe (no top-level navigation) and gets no referrer."
+      />
+      {check?.ok && check.warning && (
+        <p role="alert" className="text-xs text-amber-800 dark:text-amber-300">
+          ⚠ {check.warning}
+        </p>
+      )}
+      <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+        Only domains allowlisted by your organization can be embedded
+        {allowlist.length ? ` (${allowlist.join(", ")})` : ""}; the embedded site must also allow framing (X-Frame-Options / frame-ancestors), otherwise the widget stays blank.
+      </p>
+    </div>
+  );
+}
+
+function CustomHtmlConfig({ html, onChange }: { html: string; onChange: (v: string) => void }) {
+  return (
+    <div className="space-y-2">
+      <TextArea label="HTML / JavaScript" mono rows={12} value={html} onChange={(e) => onChange(e.target.value)} spellCheck={false} />
+      <div className="space-y-1 rounded-md bg-[var(--surface-2)] p-2 text-xs text-[var(--text-2)]">
+        <p>
+          Runs in a sandboxed iframe (<code>sandbox=&quot;allow-scripts&quot;</code>, opaque origin) with a CSP that blocks all network requests. It can&apos;t access the app, your session or other widgets.
+        </p>
+        <p>
+          The widget&apos;s query result arrives via postMessage: define <code>window.onWidgetData = (data) =&gt; …</code> or listen for the <code>ap:data</code> event; <code>data</code> is <code>{"{title, columns, rows}"}</code>.
+        </p>
+      </div>
+      <Button size="sm" onClick={() => onChange(CUSTOM_HTML_EXAMPLE)}>
+        Insert example
+      </Button>
+    </div>
   );
 }

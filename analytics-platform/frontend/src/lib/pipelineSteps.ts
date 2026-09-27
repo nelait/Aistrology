@@ -80,6 +80,17 @@ export const STEP_DEFS: StepDef[] = [
     ],
   },
   {
+    op: "fuzzy_deduplicate",
+    label: "Fuzzy deduplicate",
+    description: "Remove near-duplicate rows (typos, spacing, case) whose similarity is above a threshold.",
+    fields: [
+      { name: "columns", label: "Compare columns", kind: "columns", help: "Empty = all columns except surrogate ids" },
+      { name: "threshold", label: "Similarity threshold", kind: "number", default: 0.9, min: 0.5, max: 1, step: 0.01, help: "0.5–1; higher = only very close matches" },
+      { name: "window", label: "Blocking window", kind: "number", default: 10, min: 1, step: 1, help: "Rows compared with each neighbour after sorting; larger = slower, finds more" },
+      { name: "keep", label: "Keep", kind: "enum", options: ["first", "last"], default: "first" },
+    ],
+  },
+  {
     op: "cast",
     label: "Change type",
     description: "Convert a column's type with a strategy for values that fail to convert.",
@@ -363,6 +374,8 @@ export function describeStep(step: PipelineStep): string {
       return `${step.action ?? "cap"} ${step.method ?? "iqr"} > ${step.threshold ?? 1.5} on ${cols("columns") || "numeric columns"}`;
     case "deduplicate":
       return `on ${cols("columns") || "whole row"}, keep ${step.keep ?? "first"}`;
+    case "fuzzy_deduplicate":
+      return `similarity ≥ ${step.threshold ?? 0.9} on ${cols("columns") || "all columns"}, keep ${step.keep ?? "first"}`;
     case "cast":
       return `${String(step.column)} → ${String(step.to)} (on error: ${step.on_error ?? "null"})`;
     case "normalize_strings":

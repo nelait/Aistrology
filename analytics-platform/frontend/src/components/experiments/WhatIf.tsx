@@ -6,7 +6,8 @@ import { axisStyle, baseOption, waterfallOption } from "@/lib/chartOptions";
 import { formatNumber } from "@/lib/format";
 import { useTheme } from "@/lib/theme";
 import { EChart } from "../charts/EChart";
-import { Button, Card, SelectField, TextField } from "../ui";
+import { Button, Card, SelectField, TabPanel, Tabs, TextField } from "../ui";
+import { ForcePlotView, LimeView } from "./LocalExplanations";
 
 /** What-if analysis (XAI-003): edit feature values, see prediction and SHAP contributions (XAI-002). */
 export function WhatIf({ run, experiment }: { run: Run; experiment: Experiment }) {
@@ -18,6 +19,7 @@ export function WhatIf({ run, experiment }: { run: Run; experiment: Experiment }
     return fromArtifacts.length ? fromArtifacts : (profile.data?.columns.map((c) => c.name).filter((c) => c !== experiment.config.target) ?? []);
   }, [experiment, run, profile.data]);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [view, setView] = useState("waterfall");
 
   // Start from typical values: median for numbers, most frequent value otherwise.
   useEffect(() => {
@@ -94,7 +96,21 @@ export function WhatIf({ run, experiment }: { run: Run; experiment: Experiment }
           <p className="text-lg">
             Prediction: <strong className="tabular-nums">{typeof result.predictions[0] === "number" ? formatNumber(result.predictions[0]) : String(result.predictions[0])}</strong>
           </p>
-          {option && <EChart option={option} height={320} ariaLabel="SHAP waterfall: contribution of each feature from the base value to the prediction" />}
+          <Tabs
+            label="Explanation view"
+            active={view}
+            onChange={setView}
+            tabs={[
+              { id: "waterfall", label: "SHAP waterfall" },
+              { id: "force", label: "Force plot", hidden: !result.force_plot?.[0] },
+              { id: "lime", label: "LIME", hidden: !result.lime?.[0] },
+            ]}
+          />
+          <TabPanel id={view}>
+            {view === "waterfall" && option && <EChart option={option} height={320} ariaLabel="SHAP waterfall: contribution of each feature from the base value to the prediction" />}
+            {view === "force" && result.force_plot?.[0] && <ForcePlotView plot={result.force_plot[0]} />}
+            {view === "lime" && result.lime?.[0] && <LimeView lime={result.lime[0]} />}
+          </TabPanel>
         </div>
       )}
     </Card>

@@ -2,6 +2,7 @@
 import type { DashboardPage, DashboardSpec, DatasetRecord, FilterValue, Threshold, Widget, WidgetType } from "./types";
 import { uid } from "./data";
 import { generateSql, quoteIdent, type BuilderAggregation } from "./sql";
+import { CUSTOM_HTML_EXAMPLE } from "./embed";
 
 export const REFRESH_OPTIONS: { value: number; label: string }[] = [
   { value: 0, label: "Off" },
@@ -33,6 +34,8 @@ export const WIDGET_TYPES: { type: WidgetType; label: string; description: strin
   { type: "filter", label: "Filter", description: "Dropdown, multi-select, slider or date control" },
   { type: "prediction", label: "Prediction", description: "Form that calls a model endpoint" },
   { type: "alert", label: "Alert", description: "Red / amber / green threshold status" },
+  { type: "iframe", label: "Embed (iframe)", description: "Embed an https page from an allowlisted domain" },
+  { type: "custom_html", label: "Custom HTML", description: "Your own HTML/JS, sandboxed, fed with query data" },
 ];
 
 const DEFAULT_SIZE: Record<WidgetType, { w: number; h: number }> = {
@@ -44,6 +47,8 @@ const DEFAULT_SIZE: Record<WidgetType, { w: number; h: number }> = {
   filter: { w: 3, h: 3 },
   prediction: { w: 4, h: 8 },
   alert: { w: 3, h: 4 },
+  iframe: { w: 6, h: 8 },
+  custom_html: { w: 6, h: 8 },
 };
 
 export function emptySpec(): DashboardSpec {
@@ -72,12 +77,29 @@ export function autoSql(w: Widget): string | null {
     const measure = agg === "count" ? "COUNT(*)" : `${agg.toUpperCase()}(${quoteIdent(c.kpi.value)})`;
     return `SELECT ${measure} AS value FROM data`;
   }
-  if (w.type === "table") {
+  if (w.type === "table" || w.type === "custom_html") {
     const cols = c.columns?.length ? c.columns.map(quoteIdent).join(", ") : "*";
     const order = c.sort?.column ? ` ORDER BY ${quoteIdent(c.sort.column)} ${c.sort.desc ? "DESC" : "ASC"}` : "";
     return `SELECT ${cols} FROM data${order} LIMIT ${c.page_size ?? 500}`;
   }
   return null;
+}
+
+/**
+ * WDG-010: the API has no `custom_html` widget type, so custom HTML widgets are stored as `table` widgets
+ * carrying `config.custom_html` (the server then computes their data like a table's).
+ */
+export function fromApiWidget(w: Widget): Widget {
+  return w.type === "table" && w.config?.custom_html ? { ...w, type: "custom_html" } : w;
+}
+
+export function toApiWidget(w: Widget): Widget {
+  return w.type === "custom_html" ? { ...w, type: "table", config: { ...w.config, custom_html: w.config.custom_html ?? { html: "" } } } : w;
+}
+
+/** Spec as sent to the API (UI-only widget types mapped back). */
+export function toApiSpec(spec: DashboardSpec): DashboardSpec {
+  return { ...spec, pages: spec.pages.map((p) => ({ ...p, widgets: p.widgets.map(toApiWidget) })) };
 }
 
 /** Fill in missing optional parts of a spec coming from the API. */
@@ -87,7 +109,7 @@ export function normalizeSpec(spec: Partial<DashboardSpec> | null | undefined): 
   return {
     ...base,
     ...spec,
-    pages: pages.map((p) => ({ ...p, widgets: (p.widgets ?? []).map((w) => ({ ...w, config: w.config ?? {}, layout: w.layout ?? { x: 0, y: 0, w: 4, h: 4 } })) })),
+    pages: pages.map((p) => ({ ...p, widgets: (p.widgets ?? []).map((w) => fromApiWidget({ ...w, config: w.config ?? {}, layout: w.layout ?? { x: 0, y: 0, w: 4, h: 4 } })) })),
     filters: spec?.filters ?? [],
   };
 }
@@ -101,6 +123,7 @@ export function newWidget(type: WidgetType, page: DashboardPage): Widget {
   const config: Widget["config"] = {};
   if (type === "chart") config.chart = { type: "bar" };
   if (type === "text") config.text = "## Heading\n\nWrite **Markdown** here.";
+  if (type === "custom_html") config.custom_html = { html: CUSTOM_HTML_EXAMPLE };
   if (type === "alert") config.thresholds = [
     { op: ">=", value: 100, color: "red" },
     { op: ">=", value: 50, color: "amber" },

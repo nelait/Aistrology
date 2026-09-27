@@ -7,6 +7,7 @@ const ALL_OPS: StepOp[] = [
   "fill_missing",
   "handle_outliers",
   "deduplicate",
+  "fuzzy_deduplicate",
   "cast",
   "normalize_strings",
   "normalize_dates",

@@ -12,6 +12,8 @@ import { useEndpointFields } from "@/components/useEndpointFields";
 import { SignatureInput } from "@/components/SignatureInput";
 import { useToast } from "@/lib/toast";
 import { DeployForm } from "@/components/DeployForm";
+import { DriftTab } from "@/components/endpoints/DriftTab";
+import { ForecastTry } from "@/components/endpoints/ForecastTry";
 import { FileDrop } from "@/components/FileDrop";
 import { JobProgress } from "@/components/JobProgress";
 import { Badge, Button, Card, Checkbox, CodeBlock, ConfirmDialog, KeyValue, Modal, PageHeader, QueryState, SelectField, StatTile, TabPanel, Tabs, TextArea } from "@/components/ui";
@@ -42,7 +44,9 @@ function EndpointView({ endpoint }: { endpoint: ServingEndpoint }) {
   const [tab, setTab] = useState("overview");
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const { fields } = useEndpointFields(endpoint.name);
+  const { fields, signature } = useEndpointFields(endpoint.name);
+  const problemType = typeof signature?.problem_type === "string" ? signature.problem_type : null;
+  const forecasting = problemType === "forecasting";
   const metrics = useQuery({ queryKey: ["endpoint-metrics", endpoint.name], queryFn: () => api.endpoints.metrics(endpoint.name), refetchInterval: 15_000 });
   const remove = useMutation({
     mutationFn: () => api.endpoints.remove(endpoint.name),
@@ -116,7 +120,8 @@ function EndpointView({ endpoint }: { endpoint: ServingEndpoint }) {
         tabs={[
           { id: "overview", label: "Overview" },
           { id: "try", label: "Try it" },
-          { id: "batch", label: "Batch prediction" },
+          { id: "drift", label: "Drift", hidden: forecasting },
+          { id: "batch", label: "Batch prediction", hidden: forecasting },
           { id: "code", label: "Code & API docs" },
         ]}
       />
@@ -178,7 +183,8 @@ function EndpointView({ endpoint }: { endpoint: ServingEndpoint }) {
             </Card>
           </div>
         )}
-        {tab === "try" && <TryIt name={endpoint.name} fields={fields} />}
+        {tab === "try" && (forecasting ? <ForecastTry name={endpoint.name} signature={signature} /> : <TryIt name={endpoint.name} fields={fields} explainable={problemType !== "clustering"} />)}
+        {tab === "drift" && <DriftTab name={endpoint.name} />}
         {tab === "batch" && <Batch name={endpoint.name} />}
         {tab === "code" && (
           <div className="space-y-4">
@@ -233,7 +239,7 @@ function EndpointView({ endpoint }: { endpoint: ServingEndpoint }) {
   );
 }
 
-function TryIt({ name, fields }: { name: string; fields: SignatureField[] }) {
+function TryIt({ name, fields, explainable = true }: { name: string; fields: SignatureField[]; explainable?: boolean }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [raw, setRaw] = useState('{\n  "instances": [{}]\n}');
   const [explain, setExplain] = useState(false);
@@ -264,7 +270,7 @@ function TryIt({ name, fields }: { name: string; fields: SignatureField[] }) {
         ) : (
           <TextArea label="Request body (JSON)" hint="No model signature found; write the instances by hand." mono rows={8} value={raw} onChange={(e) => setRaw(e.target.value)} />
         )}
-        <Checkbox label="Include explanation (SHAP)" checked={explain} onChange={(e) => setExplain(e.target.checked)} />
+        {explainable && <Checkbox label="Include explanation (SHAP)" checked={explain} onChange={(e) => setExplain(e.target.checked)} />}
         <Button type="submit" variant="primary" loading={predict.isPending}>
           Predict
         </Button>

@@ -10,6 +10,7 @@ import { useTheme } from "@/lib/theme";
 import { EChart } from "../charts/EChart";
 import { DataGrid } from "../DataGrid";
 import { Button, Card, SelectField } from "../ui";
+import { AleChart, ClusterCharts, ForecastCharts } from "./ProblemCharts";
 
 function ChartCard({ title, option, height = 280, note }: { title: string; option: EChartsOption; height?: number; note?: string }) {
   return (
@@ -39,6 +40,7 @@ export function RunCharts({ run }: { run: Run }) {
   const cm = useMemo(() => confusion(run), [run]);
   const explain = useMutation({ mutationFn: () => api.training.explanationText(run.id), meta: { errorPrefix: "Explanation failed" } });
 
+  const problem = typeof run.metrics.problem_type === "string" ? run.metrics.problem_type : a.cluster_sizes ? "clustering" : a.forecast ? "forecasting" : null;
   const cards: React.ReactNode[] = [];
   if (cm) {
     const data: [number, number, number][] = [];
@@ -151,8 +153,24 @@ export function RunCharts({ run }: { run: Run }) {
     );
   }
 
+  if (a.ale && Object.keys(a.ale).length) cards.push(<AleChart key="ale" run={run} />);
+  if (a.ensemble_members?.length)
+    cards.push(
+      <Card key="ens" title="Ensemble members">
+        <ul className="space-y-1 text-sm">
+          {a.ensemble_members.map((m, i) => (
+            <li key={i}>
+              <span className="font-medium">{m.algorithm}</span> <code className="font-mono text-xs text-[var(--text-2)]">{m.params ? JSON.stringify(m.params) : ""}</code>
+            </li>
+          ))}
+        </ul>
+      </Card>,
+    );
+
   return (
     <div className="space-y-4">
+      {problem === "clustering" && <ClusterCharts run={run} />}
+      {problem === "forecasting" && <ForecastCharts run={run} />}
       <Card
         title="Plain-English explanation"
         actions={
@@ -170,7 +188,7 @@ export function RunCharts({ run }: { run: Run }) {
         )}
       </Card>
       <div className="grid gap-4 lg:grid-cols-2">{cards}</div>
-      {!cards.length && <p className="text-sm text-[var(--text-2)]">No evaluation artifacts for this run yet.</p>}
+      {!cards.length && problem !== "clustering" && problem !== "forecasting" && <p className="text-sm text-[var(--text-2)]">No evaluation artifacts for this run yet.</p>}
       {a.leaderboard?.length ? (
         <Card title="AutoML trials">
           <DataGrid
