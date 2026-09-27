@@ -358,4 +358,45 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
 
 
+class TrainingTemplate(Base):
+    """CFG-007: a named, reusable training configuration."""
+
+    __tablename__ = "training_templates"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("tt"))
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+
+
+class PredictionSample(Base):
+    """API-011: a bounded per-endpoint, per-day reservoir of served inputs, stored as drift *tokens* (bins/categories),
+    never raw values; PII features are not stored."""
+
+    __tablename__ = "prediction_samples"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(63), index=True)
+    endpoint_id: Mapped[str] = mapped_column(String(40))
+    day: Mapped[str] = mapped_column(String(10))
+    slot: Mapped[int] = mapped_column(Integer)
+    model_version_id: Mapped[str] = mapped_column(String(40))
+    at: Mapped[datetime] = mapped_column(TS, default=utcnow)
+    features: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    prediction: Mapped[str | None] = mapped_column(String(200))
+    __table_args__ = (UniqueConstraint("endpoint_id", "day", "slot"), Index("ix_ps_ep_at", "endpoint_id", "at"))
+
+
+class DriftCounter(Base):
+    """API-011: instances seen per endpoint and day (the reservoir-sampling denominator)."""
+
+    __tablename__ = "drift_counters"
+    tenant_id: Mapped[str] = mapped_column(String(63), primary_key=True)
+    endpoint_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    seen: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
 TENANT_TABLES = [t for t in Base.metadata.sorted_tables if "tenant_id" in t.columns and t.name != "tenants"]

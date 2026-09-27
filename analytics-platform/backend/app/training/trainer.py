@@ -1,4 +1,8 @@
-"""Model training, AutoML, evaluation and explainability (MDL-*, TRN-009, CFG-*, EXP-*, XAI-*)."""
+"""Model training, AutoML, evaluation and explainability (MDL-*, TRN-005, TRN-009, CFG-*, EXP-*, XAI-*).
+
+Clustering (TRN-006) and forecasting (TRN-007) have their own training loops in ``clustering.py`` and
+``forecasting.py``; :func:`train` dispatches to them by ``problem_type``.
+"""
 
 from __future__ import annotations
 
@@ -21,13 +25,27 @@ from sklearn.utils.class_weight import compute_sample_weight
 
 from ..schema.model import Schema
 from . import metrics as M
-from .algorithms import ALGORITHMS, CLASSIFICATION, DEFAULT_AUTOML, Algorithm, grid_space, suggest_params
+from .algorithms import (
+    ALGORITHMS,
+    CLASSIFICATION,
+    DEFAULT_AUTOML,
+    ENSEMBLES,
+    Algorithm,
+    get_algorithm,
+    grid_space,
+    known_algorithm,
+    suggest_params,
+)
+from .clustering import ClusteringConfig
+from .forecasting import ForecastConfig
 from .preprocessing import (
+    CappedPCA,
     PreprocessingConfig,
     SafeSelectKBest,
     build_preprocessor,
     feature_selector,
-    original_feature,
+    original_features,
+    rank_numeric,
     resample,
     split_features,
 )
@@ -54,10 +72,21 @@ class AutoMLConfig(BaseModel):
     timeout_seconds: int = Field(default=300, ge=5, le=24 * 3600)
 
 
+class EnsembleConfig(BaseModel):
+    """TRN-005: stacking / soft-voting over the best ``top_k`` AutoML candidates.
+
+    ``enabled = None`` (auto) adds ensembles when AutoML chose the candidate algorithms (``algorithms`` not pinned).
+    """
+
+    enabled: bool | None = None
+    methods: list[Literal["stacking", "voting"]] = Field(default_factory=lambda: ["stacking", "voting"], min_length=1)
+    top_k: int = Field(default=3, ge=2, le=5)
+
+
 class TrainingConfig(BaseModel):
-    target: str
+    target: str | None = None  # required except for clustering (MDL-002a)
     features: list[str] | None = None
-    problem_type: Literal["binary", "multiclass", "regression"] | None = None
+    problem_type: Literal["binary", "multiclass", "regression", "clustering", "forecasting"] | None = None
     split: SplitConfig = Field(default_factory=SplitConfig)
     cv: CVConfig = Field(default_factory=CVConfig)
     algorithms: list[str] | None = None
@@ -67,14 +96,24 @@ class TrainingConfig(BaseModel):
     class_imbalance: Literal["none", "class_weight", "smote", "undersample", "oversample"] = "none"
     max_training_seconds: int = Field(default=600, ge=5, le=24 * 3600)
     seed: int = Field(default=42, ge=0, le=2**31 - 1)
+    ensemble: EnsembleConfig = Field(default_factory=EnsembleConfig)
+    clustering: ClusteringConfig | None = None  # TRN-006
+    forecast: ForecastConfig | None = None  # TRN-007
 
     @model_validator(mode="after")
     def _check(self) -> TrainingConfig:
         for algo in self.algorithms or []:
-            if algo not in ALGORITHMS:
+            if not known_algorithm(algo):
                 raise ValueError(f"unknown algorithm {algo!r}")
         if self.split.method == "time" and not self.split.time_column:
             raise ValueError("time-based split needs split.time_column")
+        if self.problem_type != "clustering" and not self.target:
+            raise ValueError("target is required (except for clustering)")
+        if self.problem_type == "forecasting":
+            if self.forecast is None and self.split.time_column:
+                self.forecast = ForecastConfig(time_column=self.split.time_column)
+            if self.forecast is None:
+                raise ValueError("forecasting needs forecast.time_column")
         return self
 
 
@@ -105,6 +144,7 @@ class TrainingResult:
     signature: dict[str, Any]
     warnings: list[str]
     background: pd.DataFrame
+    reference: dict[str, Any] | None = None  # API-011 drift reference profile
 
 
 # -- problem detection (MDL-002) ----------------------------------------------------------------------
@@ -156,10 +196,17 @@ def _make_pipeline(pre, config: TrainingConfig, algorithm: Algorithm, params: di
     if config.class_imbalance == "class_weight" and algorithm.supports_class_weight and problem_type in CLASSIFICATION:
         params["class_weight"] = "balanced"
     steps: list[tuple[str, Any]] = [("prep", clone(pre))]
+    if config.preprocessing.pca:
+        steps.append(("pca", _pca(config)))
     if config.preprocessing.feature_selection:
         steps.append(("select", SafeSelectKBest(feature_selector(config.preprocessing.feature_selection, problem_type, config.seed))))
     steps.append(("model", algorithm.build(problem_type, params, config.seed)))
     return Pipeline(steps)
+
+
+def _pca(config: TrainingConfig) -> CappedPCA:
+    """FE-005: PCA after encoding/scaling; a fraction keeps that share of variance."""
+    return CappedPCA(n_components=config.preprocessing.pca.n_components, random_state=config.seed)
 
 
 def fit_pipeline(
@@ -217,6 +264,14 @@ def train(
     *,
     progress: Callable[[float, str], None] | None = None,
 ) -> TrainingResult:
+    if config.problem_type == "clustering":
+        from .clustering import train_clustering
+
+        return train_clustering(frame, config, schema, progress=progress)
+    if config.problem_type == "forecasting":
+        from .forecasting import train_forecast
+
+        return train_forecast(frame, config, schema, progress=progress)
     started = time.monotonic()
     deadline = started + config.max_training_seconds
     report = progress or (lambda f, m: None)
@@ -276,13 +331,35 @@ def train(
     groups = split_features(X_train, features, schema_fields)
     if groups["dropped"]:
         warns.append(f"excluded identifier/free-text columns: {', '.join(groups['dropped'])}")
+    if config.preprocessing.auto_features and groups["numeric"]:
+        # FE-001: interactions / squares of the numeric features most related to the target.
+        groups["engineered"] = rank_numeric(X_train, groups["numeric"], y_train, problem_type, config.preprocessing.auto_features.top_k)
     pre = build_preprocessor(groups, config.preprocessing, problem_type)
     n_classes = len(classes) if classes else 0
 
     candidates = config.algorithms or DEFAULT_AUTOML[problem_type]
-    candidates = [a for a in candidates if problem_type in ALGORITHMS[a].problem_types]
+    candidates = [a for a in candidates if a in ALGORITHMS and problem_type in ALGORITHMS[a].problem_types]
     if not candidates:
         raise TrainingError(f"none of the selected algorithms supports {problem_type}")
+
+    def _finalize(algo: Algorithm, params: dict[str, Any], score: float, std: float, trials: list[dict[str, Any]], t0: float):
+        final = fit_pipeline(_make_pipeline(pre, config, algo, params, problem_type), X_train, y_train, config, algo, problem_type)
+        metrics, artifacts = M.evaluate(final, X_test, y_test, problem_type, classes)
+        if X_val is not None:
+            val_metrics, _ = M.evaluate(final, X_val, y_val, problem_type, classes, curves=False)
+            metrics["validation"] = val_metrics
+        metrics["cv_score"], metrics["cv_std"], metrics["cv_metric"] = score, std, _scoring(problem_type)
+        return AlgorithmResult(
+            algorithm=algo.id,
+            params=params,
+            cv_score=score,
+            cv_std=std,
+            metrics=metrics,
+            artifacts=artifacts,
+            pipeline=final,
+            duration_seconds=time.monotonic() - t0,
+            trials=trials,
+        )
 
     results: list[AlgorithmResult] = []
     for i, algo_id in enumerate(candidates):
@@ -304,30 +381,36 @@ def train(
         else:
             best_score, best_std = _cv_score(pre, config, algo, base_params, problem_type, X_train, y_train, n_classes)
             trials = [{"params": base_params, "cv_score": best_score, "cv_std": best_std}]
-        final = fit_pipeline(_make_pipeline(pre, config, algo, best_params, problem_type), X_train, y_train, config, algo, problem_type)
-        metrics, artifacts = M.evaluate(final, X_test, y_test, problem_type, classes)
-        if X_val is not None:
-            val_metrics, _ = M.evaluate(final, X_val, y_val, problem_type, classes, curves=False)
-            metrics["validation"] = val_metrics
-        metrics["cv_score"], metrics["cv_std"], metrics["cv_metric"] = best_score, best_std, _scoring(problem_type)
-        results.append(
-            AlgorithmResult(
-                algorithm=algo_id,
-                params=best_params,
-                cv_score=best_score,
-                cv_std=best_std,
-                metrics=metrics,
-                artifacts=artifacts,
-                pipeline=final,
-                duration_seconds=time.monotonic() - t0,
-                trials=trials,
-            )
-        )
+        results.append(_finalize(algo, best_params, best_score, best_std, trials, t0))
+
+    # TRN-005: stacking / soft-voting over the best AutoML candidates, as extra candidates.
+    ensemble_on = config.ensemble.enabled if config.ensemble.enabled is not None else (config.automl.enabled and not config.algorithms)
+    if ensemble_on and len(results) >= 2:
+        ranked = sorted(results, key=lambda r: -r.cv_score)[: config.ensemble.top_k]
+        base = [{"algorithm": r.algorithm, "params": r.params} for r in ranked]
+        for method in config.ensemble.methods:
+            if time.monotonic() > deadline:
+                warns.append(f"time budget reached; skipped the {method} ensemble")
+                break
+            algo = ENSEMBLES[f"{method}_ensemble"]
+            report(0.8, f"training {algo.name}")
+            t0 = time.monotonic()
+            params = {"base": base}
+            try:
+                score, std = _cv_score(pre, config, algo, params, problem_type, X_train, y_train, n_classes)
+                res = _finalize(algo, params, score, std, [{"params": params, "cv_score": score, "cv_std": std}], t0)
+            except Exception as exc:  # noqa: BLE001 - an ensemble is optional
+                log.warning("%s failed: %s", algo.id, exc)
+                warns.append(f"{algo.name} failed: {str(exc)[:200]}")
+                continue
+            res.artifacts["ensemble_members"] = [r.algorithm for r in ranked]
+            results.append(res)
 
     best_index = int(np.argmax([r.cv_score for r in results]))
     best = results[best_index]
-    report(0.85, f"explaining {ALGORITHMS[best.algorithm].name}")
-    best.artifacts.update(explain(best.pipeline, ALGORITHMS[best.algorithm], X_train, X_test, y_test, groups, problem_type, config.seed))
+    best_algo = get_algorithm(best.algorithm)
+    report(0.85, f"explaining {best_algo.name}")
+    best.artifacts.update(explain(best.pipeline, best_algo, X_train, X_test, y_test, groups, problem_type, config.seed))
     if time.monotonic() < deadline:
         best.artifacts["learning_curve"] = M.learning_curve_data(best.pipeline, X_train, y_train, problem_type, config.seed)
 
@@ -335,21 +418,7 @@ def train(
         "target": config.target,
         "problem_type": problem_type,
         "classes": classes,
-        "features": [
-            {
-                "name": c,
-                "dtype": str(X_train[c].dtype),
-                "group": next((g for g, cols in groups.items() if c in cols), "dropped"),
-                **(
-                    {"categories": sorted(map(str, X_train[c].dropna().astype(str).unique()))[:100]}
-                    if c in groups["categorical"]
-                    else {"min": _num(X_train[c].min()), "max": _num(X_train[c].max())}
-                    if c in groups["numeric"]
-                    else {}
-                ),
-            }
-            for c in features
-        ],
+        "features": feature_signature(X_train, features, groups, schema_fields),
     }
     report(0.95, "done")
     return TrainingResult(
@@ -361,7 +430,39 @@ def train(
         signature=signature,
         warnings=warns,
         background=X_train.sample(min(100, len(X_train)), random_state=config.seed),
+        reference=reference_profile(X_train, signature, [r.pipeline for r in results], config.seed),
     )
+
+
+def reference_profile(X: pd.DataFrame, signature: dict[str, Any], pipelines: list[Any], seed: int) -> dict[str, Any] | None:
+    """API-011: training-data reference profile (per-feature distributions + prediction distribution per run)."""
+    from .drift_profile import build_reference
+
+    try:
+        return build_reference(X, signature, pipelines, seed)
+    except Exception as exc:  # noqa: BLE001 - drift monitoring is best-effort
+        log.warning("reference profile failed: %s", exc)
+        return None
+
+
+def feature_signature(X: pd.DataFrame, features: list[str], groups: dict[str, list[str]], schema_fields: dict[str, Any]) -> list[dict]:
+    """The input schema served models enforce (API-002); ``pii`` marks INF-009 PII columns (never drift-logged, API-011)."""
+    return [
+        {
+            "name": c,
+            "dtype": str(X[c].dtype),
+            "group": next((g for g, cols in groups.items() if c in cols), "dropped"),
+            "pii": bool(schema_fields.get(c) is not None and schema_fields[c].pii),
+            **(
+                {"categories": sorted(map(str, X[c].dropna().astype(str).unique()))[:100]}
+                if c in groups["categorical"]
+                else {"min": _num(X[c].min()), "max": _num(X[c].max())}
+                if c in groups["numeric"]
+                else {}
+            ),
+        }
+        for c in features
+    ]
 
 
 def _num(v):
@@ -411,6 +512,8 @@ def _search(pre, config, algo, problem_type, X, y, n_classes, n_trials, timeout)
 
 def transformed_feature_names(pipe: Pipeline) -> list[str]:
     names = list(pipe.named_steps["prep"].get_feature_names_out())
+    if "pca" in pipe.named_steps:
+        names = list(pipe.named_steps["pca"].get_feature_names_out())
     if "select" in pipe.named_steps:
         names = [n for n, keep in zip(names, pipe.named_steps["select"].get_support()) if keep]
     return names
@@ -460,10 +563,17 @@ def shap_values(
 
 
 def aggregate_to_original(values: np.ndarray, names: list[str], groups: dict[str, list[str]]) -> pd.DataFrame:
-    """Sum transformed-feature contributions (one-hot columns, date parts) back onto source columns."""
-    frame = pd.DataFrame(values, columns=names)
-    mapping = {n: original_feature(n, groups) for n in names}
-    return frame.T.groupby(mapping).sum().T
+    """Sum transformed-feature contributions (one-hot columns, date parts) back onto source columns.
+
+    Engineered interaction terms (FE-001) are split evenly between their two source columns.
+    """
+    values = np.asarray(values, dtype=float)
+    out: dict[str, np.ndarray] = {}
+    for i, name in enumerate(names):
+        sources = original_features(name, groups)
+        for src in sources:
+            out[src] = out.get(src, 0.0) + values[:, i] / len(sources)
+    return pd.DataFrame({k: out[k] for k in sorted(out)}, index=range(values.shape[0]))
 
 
 def explain(pipe, algorithm, X_train, X_test, y_test, groups, problem_type, seed) -> dict[str, Any]:
@@ -533,7 +643,58 @@ def explain(pipe, algorithm, X_train, X_test, y_test, groups, problem_type, seed
         except Exception as exc:  # noqa: BLE001
             log.warning("PDP failed for %s: %s", feature, exc)
     out["pdp"] = pdp
+    # XAI-001a: first-order accumulated local effects for the same top numeric features.
+    ale_out: dict[str, Any] = {}
+    for feature in [f for f in ranked if f in groups["numeric"]][:3]:
+        try:
+            curve = accumulated_local_effects(pipe, pdp_sample, feature, problem_type)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ALE failed for %s: %s", feature, exc)
+            continue
+        if curve:
+            ale_out[feature] = curve
+    out["ale"] = ale_out
     return out
+
+
+def prediction_function(pipe: Pipeline, problem_type: str) -> Callable[[pd.DataFrame], np.ndarray]:
+    """The scalar model output explanations work on: P(positive) for binary, P(last class) for multiclass (like the
+    PDP), the prediction for regression."""
+
+    def f(X: pd.DataFrame) -> np.ndarray:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            if problem_type in CLASSIFICATION and hasattr(pipe, "predict_proba"):
+                return np.asarray(pipe.predict_proba(X))[:, -1].astype(float)
+            return np.asarray(pipe.predict(X), dtype=float)
+
+    return f
+
+
+def accumulated_local_effects(pipe: Pipeline, X: pd.DataFrame, feature: str, problem_type: str, bins: int = 20) -> dict[str, Any] | None:
+    """XAI-001a: first-order ALE (Apley & Zhu). Quantile bins; within each bin the average prediction change from moving
+    the feature from the bin's lower to its upper edge, accumulated and centred to mean zero."""
+    x = pd.to_numeric(X[feature], errors="coerce")
+    valid = x.notna().to_numpy()
+    Xv, xv = X[valid], x[valid].to_numpy(dtype=float)
+    if len(xv) < 10:
+        return None
+    edges = np.unique(np.quantile(xv, np.linspace(0, 1, bins + 1)))
+    if len(edges) < 3:
+        return None
+    idx = np.clip(np.searchsorted(edges, xv, side="left") - 1, 0, len(edges) - 2)
+    lo, hi = Xv.copy(), Xv.copy()
+    lo[feature] = edges[idx]
+    hi[feature] = edges[idx + 1]
+    f = prediction_function(pipe, problem_type)
+    diff = f(hi) - f(lo)
+    counts = np.bincount(idx, minlength=len(edges) - 1)
+    sums = np.bincount(idx, weights=diff, minlength=len(edges) - 1)
+    local = np.where(counts > 0, sums / np.maximum(counts, 1), 0.0)
+    acc = np.concatenate([[0.0], np.cumsum(local)])
+    centres = (acc[:-1] + acc[1:]) / 2
+    acc = acc - float((centres * counts).sum() / max(1, counts.sum()))
+    return {"grid": [float(v) for v in edges], "ale": [round(float(v), 6) for v in acc], "counts": [int(c) for c in counts]}
 
 
 def _jsonish(v):

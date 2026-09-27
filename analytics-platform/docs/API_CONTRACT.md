@@ -138,6 +138,83 @@ DatasetRecord: `{id, tenant_id, name, version, latest_version, parent_version, p
 - `GET /v1/endpoints/{name}/openapi.json`.
 - `GET /v1/endpoints/{name}/metrics` returns `{requests, errors, p50_ms, p95_ms, p99_ms, by_version}`.
 
+## Model Training Studio, registry and serving: P1 additions
+All additions are backward compatible: existing request and response fields keep their meaning.
+
+### Training configuration (added fields on `POST /v1/experiments`)
+```
+{ target?: string,                       // now optional, but only for clustering
+  problem_type?: binary|multiclass|regression|clustering|forecasting,
+  preprocessing: { ...,
+    auto_features?: {interactions: true, polynomial: true, top_k: 5},   // FE-001: a×b and a² terms of the top-k numeric features
+    pca?: {n_components: 0.95} },        // FE-005: <1 = share of variance kept, >=1 = number of components
+  ensemble: {enabled?: bool|null, methods: ["stacking","voting"], top_k: 3},  // TRN-005; null = on when AutoML picked the algorithms
+  clustering?: {k_min: 2, k_max: 8, max_fit_rows: 5000},              // TRN-006
+  forecast?: {time_column, frequency?: pandas alias (D, W-SUN, MS, h, …; empty = detect), horizon: 12,
+              season_length?: int, backtest_folds: 3, interval_level: 0.9, aggregation: mean|sum|last} }  // TRN-007
+```
+- New algorithm ids:
+  - Supervised: `catboost` (TRN-002a).
+  - Ensembles: `stacking_ensemble` and `voting_ensemble` (TRN-005). They're added automatically as extra runs over the best `top_k` candidates. Their `params` are `{base: [{algorithm, params}]}` and their artifacts include `ensemble_members`.
+  - Clustering: `kmeans`, `dbscan`, `agglomerative`, `gmm`.
+  - Forecasting: `seasonal_naive`, `exponential_smoothing`, `sarima`, `gbm_forecast`.
+- `GET /v1/algorithms` lists all of them. Each entry's `problem_types` says where it applies.
+- `POST /v1/experiments/detect` (MDL-002a):
+  - `target` is optional. Without a target it returns `{problem_type: "clustering"}`.
+  - A numeric target on a regular date index also returns `alternatives: [{problem_type: "forecasting", time_column, frequency, reason}]`.
+
+### Run metrics and artifacts
+- **Clustering** (EXP-005):
+  - `metrics`: `{silhouette, calinski_harabasz, davies_bouldin, n_clusters, noise_fraction, n_rows, cv_metric: "silhouette"}`.
+  - `artifacts`: `cluster_sizes [{cluster, size, share}]`, `projection {x, y, cluster, explained_variance}` (a 2-D PCA sample), `cluster_profiles [{cluster, size, means: {feature: mean}, top_categories: {feature: value}}]`, `overall_means`, and `k_search [{params, cv_score, silhouette, …}]`.
+  - Cluster `-1` is DBSCAN noise.
+- **Forecasting** (EXP-004):
+  - `metrics`: `{mae, rmse, mase, smape, coverage, interval_width, n_backtest_points, folds, horizon, cv_metric: "mase"}`. These come from a rolling-origin backtest.
+  - `artifacts`:
+    - `history {timestamps, values}`
+    - `backtest [{origin, timestamps, actual, forecast, lower, upper}]`
+    - `forecast {timestamps, forecast, lower, upper, interval_level}`
+    - `frequency` and `season_length`
+- **Classification and regression**: `artifacts.ale {feature: {grid, ale, counts}}` holds first-order accumulated local effects for the top numeric features (XAI-001a).
+- `POST /v1/runs/{id}/explain` (XAI-002a) also returns:
+  - `force_plot: [{base_value, output_value, features: [{feature, value, shap, direction: up|down}]}]`. Features are ordered by |SHAP|.
+  - `lime: [{prediction, local_prediction, intercept, r2, weights: [{feature, value, weight}], explained_class?}]`. This is a weighted linear local surrogate, computed for the first 10 instances.
+  - Clustering and forecasting runs return 422.
+
+### ONNX export (MDL-NFR-004)
+- `GET /v1/runs/{id}/onnx` downloads `application/octet-stream`.
+- Eligible pipelines have numeric features only, scaling set to standard, minmax, robust or none, and no `auto_features`. PCA and feature selection are allowed. The model can be scikit-learn, XGBoost or LightGBM, including voting and stacking ensembles of those.
+- Inputs: one `float32 [N,1]` tensor per numeric feature. Classifier labels are class indices; the class names are in the `ap.classes` metadata.
+- Anything else returns 409 with `detail = {code: "onnx_unsupported", message}`, for example categorical or date features, CatBoost, clustering or forecasting.
+
+### Training templates (CFG-007)
+- `GET /v1/training-templates`.
+- `POST /v1/training-templates` `{name, description?, config}` returns 201 `{id, name, description, config, created_by, created_at}`.
+  - `config` is a TrainingConfig, and `target` may be left out.
+  - A duplicate name returns 409. An invalid config returns 422.
+- `GET`, `PATCH {description?, config?}` and `DELETE` on `/v1/training-templates/{id}`.
+- `POST /v1/training-templates/{id}/apply` `{name, dataset_id, dataset_version?, overrides: {target, …}}` returns 202 `{experiment, job, template_id}`. The overrides are deep-merged over the template.
+
+### Serving
+- `POST /v1/endpoints/{name}/predict` on a **forecasting** endpoint:
+  - Request: `{horizon?: 1..1000 (default: the trained horizon), history?: [{<time_column>|timestamp, <target>|value}]}`. `history` is recent observations; the model is refit with them.
+  - Response: `{horizon, timestamps[], predictions[], lower[], upper[], interval_level, model_version}`.
+  - `instances` is not needed.
+  - Batch jobs on forecasting endpoints fail with a permanent error.
+- **Clustering** endpoints return integer cluster ids in `predictions`. `-1` means noise, and only DBSCAN produces it; DBSCAN assigns new points to the nearest core point within `eps`.
+- `explain: true` returns 422 on clustering and forecasting endpoints.
+- `/openapi.json` describes the forecasting request and response for forecasting endpoints.
+- Drift monitoring (API-011):
+  - What is stored:
+    - Registering a model stores a training reference profile in the version's signature (`reference_profile`). It has numeric decile bins, top-20 categories, and the prediction distribution.
+    - Every successful prediction feeds a bounded reservoir sample (500 instances per endpoint per day, kept 30 days), whatever `log_payloads` is set to.
+    - Only drift tokens are stored (the bin index or a known category). Raw values are never stored, and PII-tagged features are skipped.
+  - `GET /v1/endpoints/{name}/drift?hours=24` returns `{endpoint, window_hours, thresholds: {warn: 0.1, alert: 0.25}, min_samples: 30, samples, status, model_version, features: [{feature, type, psi, status, bins, expected, actual, samples}], prediction: {psi, status, bins, expected, actual}, by_version}`.
+    - `status` is one of `ok`, `warn`, `alert`, `insufficient_data`, `no_data` or `not_applicable` (forecasting).
+  - `POST /v1/endpoints/{name}/drift/check` `{hours?}` checks one endpoint. `POST /v1/endpoints/drift-checks` `{hours?}` checks every active endpoint; point a scheduler at it.
+    - Both return 202 with a `serving.drift_check` job. Its result is `{checked: [{endpoint, status, samples}], alerts: [...]}`.
+    - Every endpoint in alert raises an `endpoint.threshold` notification and webhook: `{endpoint, kind: "drift", status: "alert", window_hours, threshold, features: [{feature, psi}], prediction_psi}`.
+
 ## Saved analytics
 - `POST /v1/analytics` `{dataset_id, name, sql, chart: {type, x, y, series?, aggregation?}, parameters: [{name, type: string|number|date, default}]}`.
 - `GET /v1/analytics`, `GET` / `DELETE` on `/v1/analytics/{id}`.

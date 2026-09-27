@@ -1,4 +1,9 @@
-"""Algorithm catalog (TRN-001 … TRN-005) with documented hyperparameters and search spaces (CFG-001/002/003)."""
+"""Algorithm catalog (TRN-001 … TRN-007) with documented hyperparameters and search spaces (CFG-001/002/003).
+
+Supervised algorithms live in ``ALGORITHMS``. Ensembles (TRN-005) are built from the best AutoML candidates and
+resolved through :func:`get_algorithm`; clustering (TRN-006) and forecasting (TRN-007) have their own catalogs in
+``clustering.py`` / ``forecasting.py`` and are listed alongside through :func:`catalog`.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-ProblemType = Literal["binary", "multiclass", "regression"]
+ProblemType = Literal["binary", "multiclass", "regression", "clustering", "forecasting"]
 CLASSIFICATION = ("binary", "multiclass")
 
 
@@ -173,6 +178,25 @@ def _lgbm(problem, p, seed):
     if problem in CLASSIFICATION:
         return lgb.LGBMClassifier(class_weight=p.get("class_weight"), **common)
     return lgb.LGBMRegressor(**common)
+
+
+def _catboost(problem, p, seed):
+    """TRN-002a: CatBoost (ordered boosting). Categoricals arrive already encoded by the shared preprocessor."""
+    from catboost import CatBoostClassifier, CatBoostRegressor
+
+    common = dict(
+        iterations=p.get("iterations", 300),
+        learning_rate=p.get("learning_rate", 0.1),
+        depth=p.get("depth", 6),
+        l2_leaf_reg=p.get("l2_leaf_reg", 3.0),
+        random_seed=seed,
+        thread_count=4,
+        verbose=0,
+        allow_writing_files=False,
+    )
+    if problem in CLASSIFICATION:
+        return CatBoostClassifier(auto_class_weights="Balanced" if p.get("class_weight") == "balanced" else None, **common)
+    return CatBoostRegressor(**common)
 
 
 def _svm(problem, p, seed):
@@ -351,6 +375,21 @@ ALGORITHMS: dict[str, Algorithm] = {
             tree_based=True,
         ),
         Algorithm(
+            "catboost",
+            "CatBoost",
+            "boosting",
+            _ALL,
+            _catboost,
+            [
+                _hp("iterations", "int", 300, "Number of boosting rounds (trees).", min=50, max=1000, log=True),
+                _LR,
+                _hp("depth", "int", 6, "Depth of the symmetric trees CatBoost grows.", min=2, max=10),
+                _hp("l2_leaf_reg", "float", 3.0, "L2 regularization on leaf values.", min=1.0, max=10.0, log=True),
+            ],
+            supports_class_weight=True,
+            tree_based=True,
+        ),
+        Algorithm(
             "svm",
             "Support Vector Machine",
             "kernel",
@@ -422,3 +461,77 @@ def grid_space(algorithm: Algorithm, points: int = 3) -> dict[str, list[Any]]:
             values = np.geomspace(lo, hi, points) if hp.log and lo > 0 else np.linspace(lo, hi, points)
             space[hp.name] = sorted({int(round(v)) for v in values}) if hp.type == "int" else [float(v) for v in values]
     return space
+
+
+# -- ensembles (TRN-005) -------------------------------------------------------------------------------
+
+ENSEMBLE_IDS = ("stacking_ensemble", "voting_ensemble")
+
+
+def _base_estimators(problem: str, p: dict[str, Any], seed: int) -> list[tuple[str, Any]]:
+    return [(b["algorithm"], ALGORITHMS[b["algorithm"]].build(problem, dict(b.get("params") or {}), seed)) for b in p["base"]]
+
+
+def _stacking(problem, p, seed):
+    from sklearn.ensemble import StackingClassifier, StackingRegressor
+    from sklearn.linear_model import LogisticRegression, RidgeCV
+
+    if problem in CLASSIFICATION:
+        return StackingClassifier(
+            _base_estimators(problem, p, seed), final_estimator=LogisticRegression(max_iter=1000), cv=p.get("cv", 3), n_jobs=1
+        )
+    return StackingRegressor(_base_estimators(problem, p, seed), final_estimator=RidgeCV(), cv=p.get("cv", 3), n_jobs=1)
+
+
+def _voting(problem, p, seed):
+    from sklearn.ensemble import VotingClassifier, VotingRegressor
+
+    if problem in CLASSIFICATION:
+        return VotingClassifier(_base_estimators(problem, p, seed), voting="soft", n_jobs=1)
+    return VotingRegressor(_base_estimators(problem, p, seed), n_jobs=1)
+
+
+ENSEMBLES: dict[str, Algorithm] = {
+    "stacking_ensemble": Algorithm(
+        "stacking_ensemble",
+        "Stacking ensemble (best AutoML models + linear meta-model)",
+        "ensemble",
+        _ALL,
+        _stacking,
+    ),
+    "voting_ensemble": Algorithm(
+        "voting_ensemble",
+        "Voting ensemble (soft vote / average of the best AutoML models)",
+        "ensemble",
+        _ALL,
+        _voting,
+    ),
+}
+
+
+def get_algorithm(algorithm_id: str) -> Algorithm:
+    """Resolve any trainable supervised algorithm id, including ensembles (TRN-005)."""
+    if algorithm_id in ALGORITHMS:
+        return ALGORITHMS[algorithm_id]
+    if algorithm_id in ENSEMBLES:
+        return ENSEMBLES[algorithm_id]
+    raise KeyError(algorithm_id)
+
+
+def catalog() -> list[AlgorithmInfo]:
+    """Every algorithm the studio offers: supervised, ensembles, clustering (TRN-006) and forecasting (TRN-007)."""
+    from .clustering import CLUSTERING_ALGORITHMS
+    from .forecasting import FORECASTING_ALGORITHMS
+
+    out = [a.info() for a in ALGORITHMS.values()]
+    out += [a.info() for a in ENSEMBLES.values()]
+    out += [a.info() for a in CLUSTERING_ALGORITHMS.values()]
+    out += [a.info() for a in FORECASTING_ALGORITHMS.values()]
+    return out
+
+
+def known_algorithm(algorithm_id: str) -> bool:
+    from .clustering import CLUSTERING_ALGORITHMS
+    from .forecasting import FORECASTING_ALGORITHMS
+
+    return algorithm_id in ALGORITHMS or algorithm_id in CLUSTERING_ALGORITHMS or algorithm_id in FORECASTING_ALGORITHMS
