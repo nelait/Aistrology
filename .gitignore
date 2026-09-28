@@ -25,13 +25,5 @@ pnpm-debug.log*
 !.vscode/extensions.json
 .idea/
 
-# analytics-platform (Python)
-__pycache__/
-*.pyc
-.pytest_cache/
-.ruff_cache/
-analytics-platform/backend/.data/
-*.egg-info/
-
 # agent worktrees
 .claude/worktrees/

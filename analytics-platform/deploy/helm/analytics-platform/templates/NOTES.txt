@@ -1,9 +1,0 @@
-Analytics Platform {{ .Chart.AppVersion }} deployed for cloud={{ include "ap.cloud" . }}.
-
-API:    {{ if .Values.ingress.enabled }}https://{{ .Values.ingress.host }}{{ else }}kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "ap.fullname" . }}-api 8000:{{ .Values.api.service.port }}{{ end }}
-Health: /healthz
-{{- if not .Values.secretEnv.existingSecret }}
-
-WARNING: secretEnv.existingSecret is empty, so AP_DATABASE_URL is not set.
-Create a Secret with AP_DATABASE_URL and set secretEnv.existingSecret.
-{{- end }}
